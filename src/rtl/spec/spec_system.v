@@ -20,6 +20,8 @@
    020000  the RAM disk of the MX, disks 0..7 = banks 1..4, both lanes
    200000  the Monitor of the Specialist (up to 12 KB, at C000-EFFF), bytes in a row
    210000  the ROM of the MX (48 KB, at 0000-BFFF in the ROM page), bytes in a row
+   21C000  the ROM of SDOS (D000-D9FF of the Specialist with ext_port 2)
+   220000  the ROM of the MX2: 32 KB of the standard mode, 32 KB of the MX mode
    240000  the disk images A and B of the MX (spec_fdd_cache), 820 KB each
  The ROMs arrive by the ROM loader of the mcu, files by the FL items (spec_loader); the machine is
  in reset while either loads.
@@ -36,14 +38,31 @@
  through spec_fdd_cache and img_sdc, F slots 4 and 5), FFF2 D0 the side, FFF3 D0 the drive. A write to
  FFF0 stops the CPU until DRQ or the end of the command (READY of the 8080).
 
- mx (the model) is taken during reset only.
+ The MX2 (Emu80 spmx.conf, MX2) is the MX with another ROM page: page 3 (after reset) is the map of the
+ Specialist, with the devices of the MX at F000-F7FF (A4..A2) and the keyboard PPI at F800, the ROM at
+ 0000-7FFF, or RAM with D0 of FFF8; page 2 has its MX ROM at 0000-7FFF and RAM above. In page 3 the
+ screen takes the colours of the Specialist, 8 or 4 by D1 of FFF8 (8 until it is written).
+
+ The options of phase 5. ext_port (F000 of the Specialist, the user PPI of all): 1 the mouse on the user
+ PPI (spec_mouse), 2 the SD adapter HWM / PVV on F000 with SDOS at D000-D9FF and RAM at DA00-DFFF of the
+ Specialist (spec_sd, F slot 6). ay_on: AY on the I/O ports 14 (data) and 15 (register), Emu80: I/O
+ cycles at ports below C0 then do not reach the memory, those from C0 up are memory cycles of {n, n}
+ (always so on the Z80). PHYS_FDD: the floppy connector of the Go (spec_fdd_phys).
+
+ The model and the processor are taken during reset only.
 */
 
-module spec_system (
+module spec_system #(
+	parameter PHYS_FDD = 0
+) (
 	input wire clk,
 	input wire reset,
-	input wire model_mx,         // 0 the Specialist, 1 the Specialist-MX
+	input wire [1:0] model,      // 0 the Specialist, 1 the Specialist-MX, 2 the MX2
+	input wire cpu_z80,
 	input wire turbo,            // the CPU at 4 MHz
+	input wire [1:0] kb_layout,  // 0 by the model, 1 original, 2 RAMFOS, 3 Lik
+	input wire [1:0] ext_port,   // 0 none, 1 the mouse, 2 SDOS
+	input wire ay_on,
 	input wire [1:0] cmode,      // the colours of the Specialist: 8, 4, mono
 	input wire autorun,          // start a .rks after its load
 
@@ -75,6 +94,26 @@ module spec_system (
 	input wire [7:0] kb_scancode,
 	input wire kb_scancode_upd,
 	input wire [12:0] joy,
+	input wire [7:0] ms_x,
+	input wire [7:0] ms_y,
+	input wire [3:0] ms_z,
+	input wire [2:0] ms_b,
+	input wire ms_upd,
+
+	// the physical drives (CMD_IMG_PHYS) and the floppy connector of the Go, PHYS_FDD
+	input wire img_phys_wr,
+	input wire [15:0] img_phys,
+	input wire FDC_INDEX,
+	output wire [1:0] FDC_DRIVE,
+	output wire FDC_MOTOR,
+	output wire FDC_DIR,
+	output wire FDC_STEP,
+	output wire FDC_WDATA,
+	output wire FDC_WGATE,
+	input wire FDC_TR00,
+	input wire FDC_WPRT,
+	input wire FDC_RDATA,
+	output wire FDC_SIDE_N,
 
 	// the picture: 800 x 600 at 60 Hz on clk, or 720 x 576 at 50 Hz on clk_pix (pal, 27 MHz); hs / vs
 	// active high
@@ -88,7 +127,8 @@ module spec_system (
 	input wire tape_in,
 	output wire tape_out,        // PC7
 	output wire sound,           // the Specialist: the beeper PC5; the MX: the 8253 gated by PC5
-	output reg mx = 1'b0,
+	output wire [9:0] ay_sound,
+	output reg mx = 1'b0,        // the MX or the MX2
 
 	output wire [20:0] MA,
 	inout wire [15:0] MD,
@@ -97,27 +137,41 @@ module spec_system (
 
 wire run_reset = reset | rom_active | file_active;
 
+reg mx2 = 1'b0, z80 = 1'b0;
 always @(posedge clk)
-	if (run_reset)
-		mx <= model_mx;
+	if (run_reset) begin
+		mx <= model != 2'd0;
+		mx2 <= model == 2'd2;
+		z80 <= cpu_z80;
+	end
 
 reg fdd_hold = 1'b0;
+wire phys_hold;
 wire [15:0] a;
 wire [7:0] cpu_do;
 reg [7:0] cpu_di;
-wire mem_rd, mem_wr, fetch;
+wire cpu_rd, cpu_wr, fetch, io;
+wire sram_rd_ok;
+
+// an I/O cycle below port C0 does not reach the memory on the Z80, or with the AY (Emu80)
+wire io_block = io && a[7:6] != 2'b11 && (z80 || ay_on);
+wire mem_rd = cpu_rd & ~io_block;
+wire mem_wr = cpu_wr & ~io_block;
 
 spec_cpu cpu (
 	.clk(clk),
 	.reset(run_reset),
+	.cpu_z80(z80),
 	.turbo(turbo),
-	.hold(fdd_hold),
+	.rd_ok(sram_rd_ok),
+	.hold(fdd_hold | phys_hold),
 	.addr(a),
 	.dout(cpu_do),
 	.din(cpu_di),
-	.mem_rd(mem_rd),
-	.mem_wr(mem_wr),
+	.mem_rd(cpu_rd),
+	.mem_wr(cpu_wr),
 	.fetch(fetch),
+	.io(io),
 	.inte()
 );
 
@@ -131,13 +185,19 @@ wire rd_end = rd_d & ~mem_rd; // the clock after a read
 
 // ------------------------------------------------------------------ decoding
 // the Specialist
-wire o_rom = a[15:14] == 2'b11 && a[15:12] != 4'hF;   // C000-EFFF
+wire sdos = ext_port == 2'd2 && !mx;
+wire o_sdrom = sdos && a[15:12] == 4'hD && a[11:9] < 3'd5;     // D000-D9FF
+wire o_sdram = sdos && a[15:12] == 4'hD && a[11:9] >= 3'd5;    // DA00-DFFF
+wire o_rom = a[15:14] == 2'b11 && a[15:12] != 4'hF && !o_sdram;   // C000-EFFF
 wire o_usr = a[15:11] == 5'b11110;                    // F000-F7FF
 wire o_kbd = a[15:11] == 5'b11111;                    // F800-FFFF
 
-// the MX: FFC0-FFDF the system RAM (the main RAM there), FFE0-FFFF the devices by A4..A2
-wire m_dev = a[15:5] == 11'b11111111111;
-wire m_sys = a[15:5] == 11'b11111111110;
+// the MX: FFC0-FFDF the system RAM (the main RAM there), FFE0-FFFF the devices by A4..A2. The MX2 in
+// its page 3: the devices at F000-F7FF
+reg [1:0] mpage = 2'd3;      // 0 RAM, 1 RAM disk, 2 / 3 ROM (written by the address FFFC..FFFF)
+wire mx2_std = mx2 && mpage == 2'd3;
+wire m_dev = mx2_std ? o_usr : a[15:5] == 11'b11111111111;
+wire m_sys = !mx2_std && a[15:5] == 11'b11111111110;
 wire [2:0] m_reg = a[4:2];
 wire m_kbd = m_dev && m_reg == 3'd0;   // FFE0
 wire m_usr = m_dev && m_reg == 3'd1;   // FFE4
@@ -151,14 +211,15 @@ wire inj_page;
 wire [7:0] pit_do;
 wire pit_out0, pit_out1, pit_out2;
 wire [7:0] fdc_do;
-reg [1:0] mpage = 2'd3;      // 0 RAM, 1 RAM disk, 2 / 3 ROM (written by the address FFFC..FFFF)
 reg [2:0] mdisk = 3'd0;
 reg [7:0] mcolor = 8'h70;    // FFF8: D7..4 points, D3..0 background
+reg mx2_c8 = 1'b1;           // the MX2 in page 3: 8 colours
 always @(posedge clk) begin
 	if (run_reset) begin
 		mpage <= 2'd3;
 		mdisk <= 3'd0;
 		mcolor <= 8'h70;
+		mx2_c8 <= 1'b1;
 	end
 	else if (inj_page)
 		mpage <= 2'd0;
@@ -168,8 +229,10 @@ always @(posedge clk) begin
 			if (a[1:0] == 2'd1)
 				mdisk <= cpu_do[2:0];
 		end
-		if (m_col)
+		if (m_col) begin
 			mcolor <= cpu_do;
+			mx2_c8 <= cpu_do[1];
+		end
 	end
 end
 
@@ -186,12 +249,13 @@ reg [1:0] tape_s = 2'd0;
 always @(posedge clk)
 	tape_s <= { tape_s[0], tape_in };
 
-wire sel_kbd = mx ? m_kbd : o_kbd;
-wire sel_usr = mx ? m_usr : o_usr;
-wire sel_dev = mx ? m_dev : (o_usr | o_kbd);
+wire sel_kbd = mx ? (m_kbd || (mx2_std && o_kbd)) : o_kbd;
+wire sel_usr = mx ? m_usr : (o_usr && !sdos);
+wire sel_sd = !mx && o_usr && sdos;
+wire sel_dev = mx ? (m_dev || (mx2_std && o_kbd)) : (o_usr | o_kbd);
 
 // ------------------------------------------------------------------ the PPIs and the keyboard
-wire [7:0] kbd_do, usr_do, kb_pc, kb_pa, kb_pb, kb_pa_i;
+wire [7:0] kbd_do, usr_do, kb_pc, kb_pa, kb_pb, kb_pa_i, usr_pb, mouse_do, sd_do, ay_do;
 wire [3:0] kb_pc_i;
 wire [7:2] kb_pb_i;
 wire kb_nr_n;
@@ -207,7 +271,8 @@ assign tape_out = kb_pc[7];
 spec_kbd kbd (
 	.clk(clk),
 	.reset(reset),
-	.mx(mx),
+	.mx(kb_layout == 2'd2 || (kb_layout == 2'd0 && mx && !mx2)),
+	.lik(kb_layout == 2'd3),
 	.scancode(kb_scancode),
 	.scancode_upd(kb_scancode_upd),
 	.joy(joy),
@@ -220,12 +285,56 @@ spec_kbd kbd (
 	.nr_n(kb_nr_n)
 );
 
-// the user port, nothing on it yet
+// the user port: the mouse, with ext_port 1
 spec_ppi ppi_usr (
 	.clk(clk), .reset(run_reset), .a(a[1:0]), .wr(wr_p & sel_usr), .din(cpu_do), .dout(usr_do),
-	.pa_i(8'hFF), .pb_i(8'hFF), .pc_i(8'hFF),
+	.pa_i(ext_port == 2'd1 ? mouse_do : 8'hFF), .pb_i(8'hFF), .pc_i(8'hFF),
 	.pa_in(), .pb_in(), .pcl_in(),
-	.pa_o(), .pb_o(), .pc_o()
+	.pa_o(), .pb_o(usr_pb), .pc_o()
+);
+
+spec_mouse mouse (
+	.clk(clk), .reset(run_reset),
+	.ms_x(ms_x), .ms_y(ms_y), .ms_z(ms_z), .ms_b(ms_b), .ms_upd(ms_upd),
+	.strobe(usr_pb[0]), .data(mouse_do)
+);
+
+// the AY on the ports 14 (data) and 15 (the register): 1.75 MHz, as core-orion128
+wire sel_ay = ay_on && io && a[7:1] == 7'b0001010;
+reg [6:0] ay_acc = 7'd0;
+reg ay_ce = 1'b0;
+reg [3:0] ay_reg = 4'd0;
+reg io_wr_d = 1'b0;
+wire io_wr_p = cpu_wr & ~io_wr_d;
+always @(posedge clk) begin
+	io_wr_d <= cpu_wr;
+	ay_ce <= ay_acc >= 7'd73;
+	ay_acc <= (ay_acc >= 7'd73) ? ay_acc + 7'd7 - 7'd80 : ay_acc + 7'd7;
+	if (run_reset)
+		ay_reg <= 4'd0;
+	else if (io_wr_p && sel_ay && a[0])
+		ay_reg <= cpu_do[3:0];
+end
+
+jt49 ay (
+	.rst_n(~run_reset),
+	.clk(clk),
+	.clk_en(ay_ce),
+	.addr(ay_reg),
+	.cs_n(1'b0),
+	.wr_n(~(io_wr_p && sel_ay && !a[0])),
+	.din(cpu_do),
+	.sel(1'b0),
+	.dout(ay_do),
+	.sound(ay_sound),
+	.A(),
+	.B(),
+	.C(),
+	.sample(),
+	.IOA_in(8'hFF),
+	.IOA_out(),
+	.IOB_in(8'hFF),
+	.IOB_out()
 );
 
 // ------------------------------------------------------------------ the memory
@@ -242,12 +351,34 @@ always @* begin
 	sel_rom = 1'b0;
 	sel_ram = 1'b0;
 	sel_disk = 1'b0;
-	rom_off = { 8'b10000000, a[13:0] };          // 200000 + (a - C000), and 0000.. while ipl
+	rom_off = o_sdrom ? { 10'b1000011100, a[11:0] }  // 21C000 + (a - D000)
+	                  : { 8'b10000000, a[13:0] };    // 200000 + (a - C000), and 0000.. while ipl
 	if (!mx) begin
 		if (o_rom || (ipl && !mem_wr))
 			sel_rom = 1'b1;
 		else if (!sel_dev)
 			sel_ram = 1'b1;
+	end
+	else if (mx2) begin
+		rom_off = { 6'b100010, mpage == 2'd2, a[14:0] };  // 220000 + a, 228000 + a
+		if (m_dev || (mx2_std && o_kbd))
+			;
+		else if (m_sys)
+			sel_ram = 1'b1;
+		else case (mpage)
+			2'd0: sel_ram = 1'b1;
+			2'd1: sel_disk = 1'b1;
+			2'd2:
+				if (!a[15])
+					sel_rom = 1'b1;
+				else
+					sel_ram = 1'b1;
+			default:
+				if (!a[15] && !mcolor[0])
+					sel_rom = 1'b1;
+				else
+					sel_ram = 1'b1;
+		endcase
 	end
 	else begin
 		rom_off = { 6'b100001, a };               // 210000 + a
@@ -270,7 +401,8 @@ end
 // a write to the screen stores the colour of its byte: the Specialist takes PC7, PC6, PC4 of the
 // keyboard PPI (as written), the MX its register FFF8
 wire scr = a[15:12] >= 4'h9 && a[15:14] == 2'b10;    // 9000-BFFF
-wire [7:0] cur_color = mx ? mcolor : (kb_pc & 8'hD0);
+wire view_mx = mx && !mx2_std;
+wire [7:0] cur_color = view_mx ? mcolor : (kb_pc & 8'hD0);
 
 wire [21:0] sram_addr = sel_rom ? rom_off : sel_disk ? disk_addr : ram_addr;
 wire sram_we = mem_wr && (sel_ram || sel_disk);
@@ -322,7 +454,9 @@ always @* begin
 	else if (inj == 2'd3) cpu_di = rks_start[15:8];
 	else if (sel_kbd) cpu_di = kbd_do;
 	else if (mx && m_pit) cpu_di = pit_do;
-	else if (mx && m_fdc) cpu_di = fdc_do;
+	else if (mx && m_fdc) cpu_di = phys_now ? phys_do : fdc_do;
+	else if (sel_ay && !a[0]) cpu_di = ay_do;
+	else if (sel_sd) cpu_di = a[0] ? 8'h00 : sd_do;
 	else if (sel_usr) cpu_di = usr_do;
 	else if (sel_rom || sel_ram || sel_disk) cpu_di = sram_do;
 end
@@ -363,6 +497,7 @@ assign sound = mx ? ~kb_pc[5] & (pit_out0 | pit_out2) : kb_pc[5];
 // ------------------------------------------------------------------ the floppy of the MX
 wire sel_fdc = mx && m_fdc;
 reg fdd_side = 1'b0, fdd_drive = 1'b0;
+reg [22:0] hold_t = 23'd7999999;
 wire fdc_drq, fdc_busy;
 always @(posedge clk) begin
 	if (run_reset) begin
@@ -378,8 +513,10 @@ always @(posedge clk) begin
 				2'd3: fdd_drive <= cpu_do[0];
 				default: ;
 			endcase
-		if (fdc_drq || !fdc_busy)
+		// the physical drive has no busy here: DRQ, or a turn of the disk (200 ms) at most
+		if (phys_now ? (phys_drq || hold_t == 23'd0) : (fdc_drq || !fdc_busy))
 			fdd_hold <= 1'b0;
+		hold_t <= fdd_hold ? hold_t - 23'd1 : 23'd7999999;
 	end
 end
 
@@ -389,11 +526,14 @@ reg [2:0] fdc_div = 3'd0;
 always @(posedge clk)
 	fdc_div <= fdc_div + 3'd1;
 wire fdc_ce = fdc_div == 3'd0;
+wire phys_now;
+wire [7:0] phys_do;
+wire phys_drq;
 reg fdc_rd_s = 1'b0, fdc_wr_s = 1'b0;
 reg [1:0] fdc_a_s = 2'd0;
 reg [7:0] fdc_d_s = 8'd0;
 always @(posedge clk) begin
-	if (sel_fdc && (mem_rd || mem_wr)) begin
+	if (sel_fdc && !phys_now && (mem_rd || mem_wr)) begin
 		fdc_rd_s <= mem_rd;
 		fdc_wr_s <= mem_wr;
 		fdc_a_s <= a[1:0];
@@ -413,6 +553,43 @@ always @(posedge clk) begin
 	if (sdc_img_mounted[4]) disk_a <= |sdc_img_size[31:0];
 	if (sdc_img_mounted[5]) disk_b <= |sdc_img_size[31:0];
 end
+
+// the physical drives: map_a / map_b 0 the image, 1 DS0, 2 DS1 (CMD_IMG_PHYS slot 4 / 5); a mount of an
+// image puts the drive back on it (as core-orion128)
+reg [1:0] map_a = 2'd0, map_b = 2'd0;
+always @(posedge clk) begin
+	if (sdc_img_mounted[4]) map_a <= 2'd0;
+	if (sdc_img_mounted[5]) map_b <= 2'd0;
+	if (PHYS_FDD && img_phys_wr && img_phys[15:8] == 8'd4) map_a <= img_phys[1:0];
+	if (PHYS_FDD && img_phys_wr && img_phys[15:8] == 8'd5) map_b <= img_phys[1:0];
+end
+wire [1:0] phys_ds = fdd_drive ? map_b : map_a;
+assign phys_now = PHYS_FDD && phys_ds != 2'd0;
+
+generate
+	if (PHYS_FDD) begin : g_phys
+		spec_fdd_phys phys (
+			.clk(clk), .reset(run_reset),
+			.sel(sel_fdc & phys_now), .a(a[1:0]), .rd(mem_rd), .wr(mem_wr), .din(cpu_do),
+			.dout(phys_do), .drq(phys_drq), .hold(phys_hold), .ds(phys_ds), .side(fdd_side),
+			.FDC_INDEX(FDC_INDEX), .FDC_DRIVE(FDC_DRIVE), .FDC_MOTOR(FDC_MOTOR), .FDC_DIR(FDC_DIR),
+			.FDC_STEP(FDC_STEP), .FDC_WDATA(FDC_WDATA), .FDC_WGATE(FDC_WGATE), .FDC_TR00(FDC_TR00),
+			.FDC_WPRT(FDC_WPRT), .FDC_RDATA(FDC_RDATA), .FDC_SIDE_N(FDC_SIDE_N)
+		);
+	end
+	else begin : g_nophys
+		assign phys_do = 8'hFF;
+		assign phys_drq = 1'b0;
+		assign phys_hold = 1'b0;
+		assign FDC_DRIVE = 2'b00;
+		assign FDC_MOTOR = 1'b0;
+		assign FDC_DIR = 1'b0;
+		assign FDC_STEP = 1'b0;
+		assign FDC_WDATA = 1'b0;
+		assign FDC_WGATE = 1'b0;
+		assign FDC_SIDE_N = 1'b0;
+	end
+endgenerate
 
 wire [31:0] sd_lba;
 wire sd_rd, sd_wr, sd_ack_a, sd_ack_b, sd_wr_a, sd_wr_b;
@@ -461,6 +638,9 @@ wire aux_req, aux_we, aux_ack;
 wire [21:0] aux_addr;
 wire [7:0] aux_din, aux_dout;
 
+wire mmc_rd, mmc_wr;
+wire [31:0] mmc_lba;
+wire [7:0] mmc_byte_out;
 wire [7:0] sdc_byte_out_a, sdc_byte_out_b;
 wire [31:0] sdc_sector_a, sdc_sector_b;
 wire sdc_rd_a, sdc_wr_a, sdc_rd_b, sdc_wr_b;
@@ -489,9 +669,9 @@ img_sdc #(
 	.img_q_ack(img_q_ack),
 	.sdc_img_mounted(sdc_img_mounted),
 	.sdc_img_size(sdc_img_size),
-	.sdc_rd({ 2'd0, sdc_rd_b, sdc_rd_a, 4'd0 }),
-	.sdc_wr({ 2'd0, sdc_wr_b, sdc_wr_a, 4'd0 }),
-	.sdc_sector((sdc_rd_a || sdc_wr_a) ? sdc_sector_a : sdc_sector_b),
+	.sdc_rd({ 1'b0, mmc_rd, sdc_rd_b, sdc_rd_a, 4'd0 }),
+	.sdc_wr({ 1'b0, mmc_wr, sdc_wr_b, sdc_wr_a, 4'd0 }),
+	.sdc_sector((sdc_rd_a || sdc_wr_a) ? sdc_sector_a : (sdc_rd_b || sdc_wr_b) ? sdc_sector_b : mmc_lba),
 	.sdc_busy(sdc_busy),
 	.sdc_done(sdc_done),
 	.sdc_error(sdc_error),
@@ -499,8 +679,29 @@ img_sdc #(
 	.sdc_byte_in_strobe(sdc_in_strobe),
 	.sdc_byte_addr(sdc_byte_addr),
 	.sdc_byte_in_data(sdc_in_data),
-	.sdc_byte_out_data(sdc_slot == 3'd5 ? sdc_byte_out_b : sdc_byte_out_a),
+	.sdc_byte_out_data(sdc_slot == 3'd6 ? mmc_byte_out : sdc_slot == 3'd5 ? sdc_byte_out_b : sdc_byte_out_a),
 	.active()
+);
+
+// the SD card of SDOS: the image of F slot 6
+spec_sd sd (
+	.clk(clk),
+	.reset(run_reset),
+	.cs_wr(wr_p && sel_sd && a[0]),
+	.d_wr(wr_p && sel_sd && !a[0]),
+	.din(cpu_do),
+	.dout(sd_do),
+	.img_mounted(sdc_img_mounted[6]),
+	.img_size(sdc_img_size[31:0]),
+	.hd_rd(mmc_rd),
+	.hd_wr(mmc_wr),
+	.hd_lba(mmc_lba),
+	.hd_busy(sdc_busy && sdc_slot == 3'd6),
+	.hd_done(sdc_done && sdc_slot == 3'd6),
+	.hd_byte_in_strobe(sdc_in_strobe && sdc_slot == 3'd6),
+	.hd_byte_addr(sdc_byte_addr),
+	.hd_byte_in_data(sdc_in_data),
+	.hd_byte_out_data(mmc_byte_out)
 );
 
 wire fd_req_a, fd_we_a, fd_req_b, fd_we_b, ld_req;
@@ -621,7 +822,7 @@ spec_sram sram (
 	.din_hi(cur_color),
 	.wr16(sram_wr16),
 	.dout(sram_do),
-	.rd_ok(),
+	.rd_ok(sram_rd_ok),
 	.aux_req(aux_req),
 	.aux_we(aux_we),
 	.aux_addr(aux_addr),
@@ -643,8 +844,8 @@ wire [20:0] v6_addr, v5_addr;
 
 spec_video video (
 	.clk(clk),
-	.mx(mx),
-	.cmode(cmode),
+	.mx(view_mx),
+	.cmode(mx2_std ? { 1'b0, ~mx2_c8 } : cmode),
 	.vid_req(v6_req),
 	.vid_addr(v6_addr),
 	.vid_dout(vid_dout),
@@ -659,8 +860,8 @@ spec_video_576 video576 (
 	.clk(clk),
 	.clk_pix(clk_pix),
 	.en(pal),
-	.mx(mx),
-	.cmode(cmode),
+	.mx(view_mx),
+	.cmode(mx2_std ? { 1'b0, ~mx2_c8 } : cmode),
 	.vid_req(v5_req),
 	.vid_addr(v5_addr),
 	.vid_dout(vid_dout),

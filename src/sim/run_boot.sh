@@ -13,13 +13,18 @@
 #  8. the floppy of the MX (mkrom_fdd.py): Restore, Seek, a sector of side 1 read through the sync port
 #     FFF0, the same bytes written to another sector; the memory and the saved image are compared.
 #  9. RAMFOS boots a disk on F6 (mkboot_odi.py).
+# 10. the Z80: the same Monitor screen as the 8080 (test 3).
+# 11. the AY (mkrom_ay.py) on both processors; without the AY the OUT cycles write the memory {n, n}.
+# 12. with the files of Emu80 (EMU80=<emu80v4/dist>, else skipped): SDOS on its SD image shows its
+#     prompt; the MX2 goes into RAMFOS on the directive X.
 set -eu
 H=$(cd "$(dirname "$0")" && pwd)
 S=$(cd "$H/.." && pwd)
 B=$H/build
 mkdir -p "$B"
+"$H/vhdl2v.sh" "$B/vhdl" > /dev/null 2> "$B/vhdl.log" || { cat "$B/vhdl.log"; exit 1; }
 R=$S/rtl
-SRC="$H/tb_boot.v $R/spec/spec_system.v $R/spec/spec_cpu.v $R/spec/spec_ppi.v $R/spec/spec_sram.v $R/spec/spec_kbd.v $R/spec/spec_loader.v $R/spec/spec_video.v $R/spec/spec_video_576.v $R/spec/spec_fdd_cache.v $R/fdd/wd1793.v $S/../modules/rtl/mcu/img_sdc.v $S/../modules/rtl/mem/kg_spram.v $S/../modules/rtl/mem/kg_sdpram.v $R/vm80a/vm80a.v $R/kf8253/KF8253.v $R/kf8253/KF8253_Control_Logic.v $R/kf8253/KF8253_Counter.v"
+SRC="$H/tb_boot.v $R/spec/spec_system.v $R/spec/spec_cpu.v $R/spec/spec_ppi.v $R/spec/spec_sram.v $R/spec/spec_kbd.v $R/spec/spec_loader.v $R/spec/spec_video.v $R/spec/spec_video_576.v $R/spec/spec_fdd_cache.v $R/spec/spec_sd.v $R/spec/spec_mouse.v $R/jt49/jt49.v $R/jt49/jt49_cen.v $R/jt49/jt49_div.v $R/jt49/jt49_eg.v $R/jt49/jt49_exp.v $R/jt49/jt49_noise.v $R/../../modules/rtl/mem/kg_tdpram.v $B/vhdl/t80pa.v $R/fdd/wd1793.v $S/../modules/rtl/mcu/img_sdc.v $S/../modules/rtl/mem/kg_spram.v $S/../modules/rtl/mem/kg_sdpram.v $R/vm80a/vm80a.v $R/kf8253/KF8253.v $R/kf8253/KF8253_Control_Logic.v $R/kf8253/KF8253_Counter.v"
 verilator --language 1364-2005 --cc --exe --build -j 8 -O3 --top-module tb_boot -Mdir "$B/obj" -o sim_boot \
 	-Wno-fatal -Wno-lint -Wno-style -Wno-MULTIDRIVEN -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-PINNOTFOUND \
 	--x-initial fast -CFLAGS -O2 $SRC "$H/sim_boot.cpp" > "$B/build.log" 2>&1 || { tail -30 "$B/build.log"; exit 1; }
@@ -64,5 +69,19 @@ cmp -i 20480:27648 -n 1024 "$B/fdd_out.odi" "$B/fdd.odi" || { echo "fdd: the wri
 python3 "$H/mkboot_odi.py" "$B/boot.odi"
 "$SIM" --mx --rom $MX --disk "$B/boot.odi" --ms 4500 --key 800:5A --key 900:F0,5A --key 2000:0B --key 2100:F0,0B \
 	--expect 0x18200:0x5A --expect 0x12000:0xF0 --expect 0x12001:0xC1 || err=1
+keys() { t=$1; shift; for k in "$@"; do printf -- '--key %d:%s --key %d:F0,%s ' $t $k $((t+100)) $k; t=$((t+300)); done; }
+"$SIM" --z80 --rom $M2 --ms $((T + 800)) $(keys $T 05 5A) --ppm "$B/z80.ppm" || err=1
+cmp -s "$B/m2_key.ppm" "$B/z80.ppm" || { echo "z80: not the screen of the 8080"; err=1; }
+python3 "$H/mkrom_ay.py" "$B/ay.rom"
+for z in "" --z80; do
+	"$SIM" $z --ay --rom "$B/ay.rom:0x200000" --ms 200 --expect 0x2A2A:0x00 | tee "$B/ay.txt" || err=1
+	grep -q " ay 0 " "$B/ay.txt" && { echo "ay: silent $z"; err=1; }
+done
+"$SIM" --rom "$B/ay.rom:0x200000" --ms 200 --expect 0x2A2A:0x01 || err=1
+if [ -n "${EMU80:-}" ]; then
+	"$SIM" --rom $M2 --rom "$EMU80/spec/sdos_hwmpvv.bin:0x21C000" --ext 2 --sd "$EMU80/spec/sd_spec.img" --ms 6000 \
+		$(keys 1000 05 5A 34 23 45 45 45 5A) --ppm "$B/sdos.ppm" || err=1
+	"$SIM" --mx2 --rom "$EMU80/specmx/syabr_mx2.bin:0x220000" --ms 2500 $(keys 1500 22 5A) --frame "$B/mx2.ppm" | tee "$B/mx2.txt" || err=1
+fi
 echo "run_boot: $err errors"
 exit $err

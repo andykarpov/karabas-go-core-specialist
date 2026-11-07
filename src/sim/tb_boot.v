@@ -5,7 +5,12 @@
 module tb_boot (
 	input wire clk,
 	input wire reset,
-	input wire model_mx,
+	input wire [1:0] model,
+	input wire cpu_z80,
+	input wire [1:0] kb_layout,
+	input wire [1:0] ext_port,
+	input wire ay_on,
+	output wire [9:0] ay_sound,
 	input wire turbo,
 	input wire [1:0] cmode,
 	input wire autorun,
@@ -47,7 +52,9 @@ wire [15:0] MD;
 wire [1:0] MWR_N;
 
 spec_system sys (
-	.clk(clk), .reset(reset), .model_mx(model_mx), .turbo(turbo), .cmode(cmode), .autorun(autorun),
+	.clk(clk), .reset(reset), .model(model), .cpu_z80(cpu_z80), .kb_layout(kb_layout), .ext_port(ext_port), .ay_on(ay_on), .ay_sound(ay_sound),
+	.ms_x(8'd0), .ms_y(8'd0), .ms_z(4'd0), .ms_b(3'd0), .ms_upd(1'b0), .img_phys_wr(1'b0), .img_phys(16'd0),
+	.FDC_INDEX(1'b0), .FDC_TR00(1'b0), .FDC_WPRT(1'b0), .FDC_RDATA(1'b0), .turbo(turbo), .cmode(cmode), .autorun(autorun),
 	.rom_active(rom_active), .rom_addr(rom_addr), .rom_data(rom_data), .rom_wr(rom_wr),
 	.file_active(file_active), .file_slot(file_slot), .file_addr(file_addr), .file_data(file_data), .file_wr(file_wr),
 .img_mounted(img_mounted), .img_size(img_size), .img_wp(8'd0), .img_data_wr(img_data_wr),
