@@ -1,0 +1,24 @@
+{
+    "id": "specialist",
+    "name": "Specialist",
+    "build": "00000000",
+    "visible": true,
+    "type": "osd",
+    "order": 15,
+    "eeprom_bank": 255,
+    "drives": ["FDD0", "FDD1"],
+    "roms": [
+    ],
+    "boards": {
+        "minig": {"bitstream": "karabas_minig.bin"}
+    },
+    "osd": [
+    {"type": "FL", "name": "RKS file", "slot": 1, "extensions": ".rks", "dir": "/specialist", "hotkey": "Menu+F2"},
+    {"type": "FL", "name": "Monitor", "slot": 2, "extensions": ".rom,.bin", "dir": "/specialist", "hotkey": "Menu+F4", "autoload": 1},
+    {"type": "-"},
+    {"type": "S", "name": "Model", "options": ["Specialist", "Specialist-MX"], "default": 0, "hotkey": "Menu+M"},
+    {"type": "S", "name": "CPU speed", "options": ["2 MHz", "4 MHz"], "default": 0, "hotkey": "Menu+S"},
+    {"type": "S", "name": "Color", "options": ["8 colors", "4 colors", "Mono"], "default": 0, "hotkey": "Menu+C"},
+    {"type": "T", "name": "Reset", "hotkey": "F12"}
+    ]
+}
