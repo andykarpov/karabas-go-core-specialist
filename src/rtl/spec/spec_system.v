@@ -6,8 +6,13 @@
 
  The Specialist and the Specialist-MX: the processor, the memory maps, the ports, the SRAM, the
  video and the keyboard, on one clock of 40 MHz. docs/HARDWARE.md has the maps. The structure is
- that of orion_system of karabas-go-core-orion128. The MX devices (the 8253, the FDC) come in the
- next phases.
+ that of orion_system of karabas-go-core-orion128. The FDC of the MX comes in phase 3.
+
+ The sound: the Specialist has the beeper on PC5 of the keyboard PPI. The MX has the 8253 at FFEC
+ (KF8253 of kitune-san, MIT, from karabas-go-core-pcxt) on 2 MHz: channels 0 and 1 count it,
+ channel 2 counts the output of channel 1 (Emu80 SpecMxPit8253SoundSource; Sorgelig clocks channel
+ 0 by it instead, docs/BACKLOG.md); the sound is OUT0 or OUT2, silenced while PC5 is 1 (the gate of
+ Emu80), and the tape output PC7 is heard too (not muted in Emu80).
 
  SRAM (a byte address of 22 bits, spec_sram; a 64 KB page is {bank, a[15:0], lane}):
    000000  the main RAM: lane 0 the bytes, lane 1 the colour of each byte of the screen
@@ -23,7 +28,8 @@
 
  A .rks file starts as Emu80 runs it: after the load the machine leaves reset, its Monitor runs for
  200 ms (it sets up the PPI and its variables), then the next opcode fetch reads JMP start instead
- of the memory (autorun; the Specialist only, the MX in phase 2).
+ of the memory (autorun). The MX runs RAMFOS for those 200 ms, and the injected jump also selects
+ the RAM page, where the file is (the main RAM, as the core of Sorgelig loads it).
 
  mx (the model) is taken during reset only.
 */
@@ -58,7 +64,7 @@ module spec_system (
 
 	input wire tape_in,
 	output wire tape_out,        // PC7
-	output wire beep,            // PC5
+	output wire sound,           // the Specialist: the beeper PC5; the MX: the 8253 gated by PC5
 	output reg mx = 1'b0,
 
 	output wire [20:0] MA,
@@ -111,9 +117,13 @@ wire m_sys = a[15:5] == 11'b11111111110;
 wire [2:0] m_reg = a[4:2];
 wire m_kbd = m_dev && m_reg == 3'd0;   // FFE0
 wire m_usr = m_dev && m_reg == 3'd1;   // FFE4
+wire m_pit = m_dev && m_reg == 3'd3;   // FFEC
 wire m_col = m_dev && m_reg == 3'd6;   // FFF8
 wire m_pag = m_dev && m_reg == 3'd7;   // FFFC
 
+wire inj_page;
+wire [7:0] pit_do;
+wire pit_out0, pit_out1, pit_out2;
 reg [1:0] mpage = 2'd3;      // 0 RAM, 1 RAM disk, 2 / 3 ROM (written by the address FFFC..FFFF)
 reg [2:0] mdisk = 3'd0;
 reg [7:0] mcolor = 8'h70;    // FFF8: D7..4 points, D3..0 background
@@ -123,6 +133,8 @@ always @(posedge clk) begin
 		mdisk <= 3'd0;
 		mcolor <= 8'h70;
 	end
+	else if (inj_page)
+		mpage <= 2'd0;
 	else if (wr_p && mx) begin
 		if (m_pag) begin
 			mpage <= a[1:0];
@@ -158,7 +170,6 @@ spec_ppi ppi_kbd (
 	.pa_in(), .pb_in(), .pcl_in(),
 	.pa_o(kb_pa), .pb_o(kb_pb), .pc_o(kb_pc)
 );
-assign beep = kb_pc[5];
 assign tape_out = kb_pc[7];
 
 spec_kbd kbd (
@@ -249,7 +260,7 @@ always @(posedge clk) begin
 		inj <= 2'd0;
 	end
 	else if (file_d && !file_active) begin
-		run_pend <= autorun && rks_ok && file_slot == 8'd1 && !mx;
+		run_pend <= autorun && rks_ok && file_slot == 8'd1;
 		run_arm <= 1'b0;
 		inj <= 2'd0;
 		run_wait <= 23'd7999999;
@@ -270,15 +281,51 @@ always @(posedge clk) begin
 		inj <= inj == 2'd3 ? 2'd0 : inj + 2'd1;
 end
 
+assign inj_page = run_arm && mem_rd && fetch && mx;
+
 always @* begin
 	cpu_di = 8'hFF;
 	if (inj == 2'd1) cpu_di = 8'hC3;
 	else if (inj == 2'd2) cpu_di = rks_start[7:0];
 	else if (inj == 2'd3) cpu_di = rks_start[15:8];
 	else if (sel_kbd) cpu_di = kbd_do;
+	else if (mx && m_pit) cpu_di = pit_do;
 	else if (sel_usr) cpu_di = usr_do;
 	else if (sel_rom || sel_ram || sel_disk) cpu_di = sram_do;
 end
+
+// ------------------------------------------------------------------ the 8253 of the MX
+reg [3:0] pit_div = 4'd0;
+reg pit_clk = 1'b0;           // 2 MHz: a falling edge every 20 clocks
+always @(posedge clk)
+	if (pit_div == 4'd9) begin
+		pit_div <= 4'd0;
+		pit_clk <= ~pit_clk;
+	end
+	else
+		pit_div <= pit_div + 4'd1;
+
+KF8253 pit (
+	.clock(clk),
+	.reset(run_reset),
+	.chip_select_n(~(mx && m_pit)),
+	.read_enable_n(~mem_rd),
+	.write_enable_n(~mem_wr),
+	.address(a[1:0]),
+	.data_bus_in(cpu_do),
+	.data_bus_out(pit_do),
+	.counter_0_clock(pit_clk),
+	.counter_0_gate(1'b1),
+	.counter_0_out(pit_out0),
+	.counter_1_clock(pit_clk),
+	.counter_1_gate(1'b1),
+	.counter_1_out(pit_out1),
+	.counter_2_clock(pit_out1),
+	.counter_2_gate(1'b1),
+	.counter_2_out(pit_out2)
+);
+
+assign sound = mx ? ~kb_pc[5] & (pit_out0 | pit_out2) : kb_pc[5];
 
 // ------------------------------------------------------------------ the loaders, the SRAM, the video
 wire aux_req, aux_ack;

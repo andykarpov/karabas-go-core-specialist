@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
 	top->rom_active = 0;
 	uint64_t t0 = clks;
 	uint64_t end = t0 + (uint64_t)ms * 40000;
-	int beeps = 0, prev = 0;
+	int edges_n = 0, prev = 0;
 	size_t next = 0;
 	while (clks < end) {
 		for (auto &e : evs) {
@@ -142,8 +142,8 @@ int main(int argc, char **argv) {
 			e.at = UINT64_MAX;
 		}
 		tick();
-		if (top->beep && !prev) beeps++;
-		prev = top->beep;
+		if (top->sound && !prev) edges_n++;
+		prev = top->sound;
 	}
 	(void)next;
 	std::vector<uint8_t> scr(48 * 256), col(48 * 256);
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
 			sum = sum * 31 + b;
 			lit += __builtin_popcount(b);
 		}
-	printf("%s %s %d ms: beep edges %d screen sum %08x lit %u\n", mx ? "MX" : "Specialist", turbo ? "4MHz" : "2MHz", ms, beeps, sum, lit);
+	printf("%s %s %d ms: sound edges %d screen sum %08x lit %u\n", mx ? "MX" : "Specialist", turbo ? "4MHz" : "2MHz", ms, edges_n, sum, lit);
 	int err = 0;
 	for (auto &e : expects) {
 		uint8_t v = peek(e.first);

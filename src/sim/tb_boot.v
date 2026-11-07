@@ -25,7 +25,7 @@ module tb_boot (
 	output wire hs,
 	output wire vs,
 	output wire de,
-	output wire beep,
+	output wire sound,
 	output wire mx,
 	input wire [21:0] dbg_addr,
 	output wire [7:0] dbg_q
@@ -41,7 +41,7 @@ spec_system sys (
 	.file_active(file_active), .file_slot(file_slot), .file_addr(file_addr), .file_data(file_data), .file_wr(file_wr),
 	.kb_scancode(kb_scancode), .kb_scancode_upd(kb_scancode_upd), .joy(joy),
 	.rgb(rgb), .hs(hs), .vs(vs), .de(de),
-	.tape_in(1'b1), .tape_out(), .beep(beep), .mx(mx),
+	.tape_in(1'b1), .tape_out(), .sound(sound), .mx(mx),
 	.MA(MA), .MD(MD), .MWR_N(MWR_N)
 );
 

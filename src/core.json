@@ -1,7 +1,7 @@
 {
     "id": "specialist",
     "name": "Specialist",
-    "build": "26110701",
+    "build": "26110702",
     "visible": true,
     "type": "osd",
     "order": 15,
@@ -18,6 +18,7 @@
     "osd": [
     {"type": "FL", "name": "RKS file", "slot": 1, "extensions": ".rks", "dir": "/specialist", "hotkey": "Menu+F2"},
     {"type": "FL", "name": "Monitor", "slot": 2, "extensions": ".rom,.bin", "dir": "/specialist", "hotkey": "Menu+F4", "autoload": 1},
+    {"type": "FL", "name": "MX ROM", "slot": 3, "extensions": ".rom,.bin", "dir": "/specialist", "hotkey": "Menu+F5", "autoload": 1},
     {"type": "-"},
     {"type": "S", "name": "Model", "options": ["Specialist", "Specialist-MX"], "default": 0, "hotkey": "Menu+M"},
     {"type": "S", "name": "CPU speed", "options": ["2 MHz", "4 MHz"], "default": 0, "hotkey": "Menu+S"},
