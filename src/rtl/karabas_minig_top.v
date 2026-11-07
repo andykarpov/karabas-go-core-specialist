@@ -12,8 +12,8 @@
  ft-clk-out-required). HDMI: kg_dcm 5 x clk_sys and its inverse.
 
  Soft switches (the index of the item in the osd of core.json, file items included):
-   0 RKS file (FL 1)   1 Monitor (FL 2)   2 -   3 Model (Specialist / Specialist-MX)
-   4 CPU speed (2 / 4 MHz)   5 Color (8 colors / 4 colors / mono)   6 Autorun (on / off)   7 Reset
+   0 RKS file (FL 1)   1 Monitor (FL 2)   2 MX ROM (FL 3)   3 -   4 Model (Specialist / Specialist-MX)
+   5 CPU speed (2 / 4 MHz)   6 Color (8 colors / 4 colors / mono)   7 Autorun (on / off)   8 Reset
  A change of the model resets the machine (it is taken in reset).
 */
 
@@ -324,18 +324,18 @@ assign SD_CLK = mcu_sck_ibufg;
 
 // ------------------------------------------------------------------ soft switches
 
-wire [8*8-1:0] sw;
-kg_soft_switches #(.N(8)) soft_switches (
+wire [9*8-1:0] sw;
+kg_soft_switches #(.N(9)) soft_switches (
 	.clk(clk_sys),
 	.command(softsw_command),
 	.regs(sw),
 	.upd()
 );
-wire sw_mx = sw[3*8];
-wire sw_turbo = sw[4*8];
-wire [1:0] sw_cmode = sw[5*8 +: 2];
-wire sw_noauto = sw[6*8];
-wire sw_reset = sw[7*8];
+wire sw_mx = sw[4*8];
+wire sw_turbo = sw[5*8];
+wire [1:0] sw_cmode = sw[6*8 +: 2];
+wire sw_noauto = sw[7*8];
+wire sw_reset = sw[8*8];
 
 // a change of the model resets the machine
 reg mx_d = 1'b0;
@@ -352,7 +352,7 @@ end
 
 wire [23:0] video_rgb;
 wire video_hs, video_vs, video_de;
-wire beep;
+wire sound, mx;
 
 spec_system spec (
 	.clk(clk_sys),
@@ -379,8 +379,8 @@ spec_system spec (
 	.de(video_de),
 	.tape_in(1'b1),      // phase 4
 	.tape_out(TAPE_OUT),
-	.beep(beep),
-	.mx(),
+	.sound(sound),
+	.mx(mx),
 	.MA(MA),
 	.MD(MD),
 	.MWR_N(MWR_N)
@@ -405,7 +405,8 @@ kg_osd_overlay #(.H_OFFSET(180), .V_OFFSET(59), .H_DIV4_WIDTH(1100)) osd (
 
 // ------------------------------------------------------------------ audio
 
-wire [15:0] audio = beep ? 16'h1800 : 16'h0000;
+// the MX hears its tape output too (Emu80), quieter
+wire [15:0] audio = (sound ? 16'h1800 : 16'h0000) + (mx && TAPE_OUT ? 16'h0600 : 16'h0000);
 
 kg_pcm5102 #(.DIV_BITS(2)) dac (  // bck 5 MHz, 156 kHz
 	.clk(clk_sys),

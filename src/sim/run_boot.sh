@@ -7,13 +7,16 @@
 #  4. a .rks (mkrks.py: fills columns of the screen in colour, writes 5A at 1000) loads through the FL
 #     port and starts by itself 200 ms later; with --noauto it loads but does not start.
 #  5. the Specialist-MX, RAMFOS: its date prompt.
+#  6. the MX ports (mkrom_mx.py): RAM disk pages, the main RAM, the colour register with a write to the
+#     screen, the 8253 channel 0 sounds (100 counts at 2 MHz: 10 kHz, some 5000 edges in 500 ms).
+#  7. a .rks on the MX: RAMFOS runs, then the file starts in the RAM page.
 set -eu
 H=$(cd "$(dirname "$0")" && pwd)
 S=$(cd "$H/.." && pwd)
 B=$H/build
 mkdir -p "$B"
 R=$S/rtl
-SRC="$H/tb_boot.v $R/spec/spec_system.v $R/spec/spec_cpu.v $R/spec/spec_ppi.v $R/spec/spec_sram.v $R/spec/spec_kbd.v $R/spec/spec_loader.v $R/spec/spec_video.v $R/vm80a/vm80a.v"
+SRC="$H/tb_boot.v $R/spec/spec_system.v $R/spec/spec_cpu.v $R/spec/spec_ppi.v $R/spec/spec_sram.v $R/spec/spec_kbd.v $R/spec/spec_loader.v $R/spec/spec_video.v $R/vm80a/vm80a.v $R/kf8253/KF8253.v $R/kf8253/KF8253_Control_Logic.v $R/kf8253/KF8253_Counter.v"
 verilator --language 1364-2005 --cc --exe --build -j 8 -O3 --top-module tb_boot -Mdir "$B/obj" -o sim_boot \
 	-Wno-fatal -Wno-lint -Wno-style -Wno-MULTIDRIVEN -Wno-UNOPTFLAT -Wno-PINMISSING -Wno-PINNOTFOUND \
 	--x-initial fast -CFLAGS -O2 $SRC "$H/sim_boot.cpp" > "$B/build.log" 2>&1 || { tail -30 "$B/build.log"; exit 1; }
@@ -42,5 +45,11 @@ python3 "$H/mkrks.py" "$B/t.rks"
 
 "$SIM" --mx --rom $MX --ms $T --ppm "$B/mx.ppm" --frame "$B/mx_frame.ppm" || err=1
 nonempty mx; nonempty mx_frame
+python3 "$H/mkrom_mx.py" "$B/mx_test.rom"
+"$SIM" --mx --rom "$B/mx_test.rom:0x210000" --ms 500 \
+	--expect 0x42469:0x33 --expect 0x62469:0x55 --expect 0x18200:0x77 --expect 0x12000:0xFF --expect 0x12001:0x5A \
+	| tee "$B/mx_test.txt" || err=1
+[ "$(sed -n 's/.*sound edges \([0-9]*\).*/\1/p' "$B/mx_test.txt")" -gt 4000 ] || { echo "mx: the 8253 is silent"; err=1; }
+"$SIM" --mx --rom $MX --ms $((T + 500)) --file $T:1:"$B/t.rks" --expect 0x2000:0x5A --expect 0x12000:0xFF || err=1
 echo "run_boot: $err errors"
 exit $err

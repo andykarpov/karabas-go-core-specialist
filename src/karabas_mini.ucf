@@ -248,6 +248,5 @@ TIMESPEC "TS_SRAM_OUT" = FROM FFS TO "TG_SRAM_OUT" 12 ns DATAPATHONLY;
 TIMESPEC "TS_SRAM_IN" = FROM "TG_SRAM_IN" TO FFS 12 ns DATAPATHONLY;
 
 # The 27 MHz pixel clock of 720 x 576 comes in phase 4 (docs/PLAN.md), its constraints with it.
-# the reset of the HDMI chain after a change of the mode is held for 255 clocks
-NET "clk_hdmi" TNM_NET = "TG_CLK_HDMI";
-TIMESPEC "TS_SYS_TO_HDMI" = FROM "TG_CLK_SYS" TO "TG_CLK_HDMI" TIG;
+# No TIG from clk_sys to the HDMI clock (orion128 has one: its HDMI chain runs on a pixel clock of its own).
+# Here the HDMI encoder runs on clk_sys and feeds the serialiser on clk_hdmi: those paths are timed.

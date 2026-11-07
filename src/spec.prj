@@ -1,4 +1,7 @@
 verilog work "rtl/vm80a/vm80a.v"
+verilog work "rtl/kf8253/KF8253_Control_Logic.v"
+verilog work "rtl/kf8253/KF8253_Counter.v"
+verilog work "rtl/kf8253/KF8253.v"
 verilog work "rtl/spec/spec_sram.v"
 verilog work "rtl/spec/spec_ppi.v"
 verilog work "rtl/spec/spec_cpu.v"
