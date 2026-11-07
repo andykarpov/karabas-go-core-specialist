@@ -54,8 +54,8 @@ spec_system sys (
 	.img_data_addr(img_data_addr), .img_data(img_data), .img_result_wr(img_result_wr), .img_result(img_result),
 	.img_sum(img_sum), .img_q_wr(img_q_wr), .img_q_di(img_q_di), .img_q_ack(img_q_ack),
 	.kb_scancode(kb_scancode), .kb_scancode_upd(kb_scancode_upd), .joy(joy),
-	.rgb(rgb), .hs(hs), .vs(vs), .de(de),
-	.tape_in(1'b1), .tape_out(), .sound(sound), .mx(mx),
+	.clk_pix(clk), .pal(1'b0), .rgb(rgb), .hs(hs), .vs(vs), .de(de),
+	.tape_in(1'b0), .tape_out(), .sound(sound), .mx(mx),
 	.MA(MA), .MD(MD), .MWR_N(MWR_N)
 );
 
