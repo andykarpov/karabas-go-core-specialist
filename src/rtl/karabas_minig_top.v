@@ -12,8 +12,9 @@
  ft-clk-out-required). HDMI: kg_dcm 5 x clk_sys and its inverse.
 
  Soft switches (the index of the item in the osd of core.json, file items included):
-   0 RKS file (FL 1)   1 Monitor (FL 2)   2 MX ROM (FL 3)   3 -   4 Model (Specialist / Specialist-MX)
-   5 CPU speed (2 / 4 MHz)   6 Color (8 colors / 4 colors / mono)   7 Autorun (on / off)   8 Reset
+   0 Disk A (F 4)   1 Disk B (F 5)   2 RKS file (FL 1)   3 Monitor (FL 2)   4 MX ROM (FL 3)   5 -
+   6 Model (Specialist / Specialist-MX)   7 CPU speed (2 / 4 MHz)   8 Color (8 colors / 4 colors / mono)
+   9 Autorun (on / off)   10 Reset
  A change of the model resets the machine (it is taken in reset).
 */
 
@@ -223,8 +224,8 @@ kg_mcu #(
 	.ENABLE_UART(0),
 	.ENABLE_MATRIX(0),
 	.ENABLE_DEBUG(0),
-	.ENABLE_IMG(0),      // the floppy of the MX: phase 3
-	.ENABLE_IMG_WP(0),
+	.ENABLE_IMG(1),      // the floppy of the MX: the images of the F items
+	.ENABLE_IMG_WP(1),
 	.ENABLE_FILE(1),
 	.FILE_CMDS(0),       // the ioctl commands of the FL items
 	.FILE_WR_EACH(1),
@@ -324,18 +325,18 @@ assign SD_CLK = mcu_sck_ibufg;
 
 // ------------------------------------------------------------------ soft switches
 
-wire [9*8-1:0] sw;
-kg_soft_switches #(.N(9)) soft_switches (
+wire [11*8-1:0] sw;
+kg_soft_switches #(.N(11)) soft_switches (
 	.clk(clk_sys),
 	.command(softsw_command),
 	.regs(sw),
 	.upd()
 );
-wire sw_mx = sw[4*8];
-wire sw_turbo = sw[5*8];
-wire [1:0] sw_cmode = sw[6*8 +: 2];
-wire sw_noauto = sw[7*8];
-wire sw_reset = sw[8*8];
+wire sw_mx = sw[6*8];
+wire sw_turbo = sw[7*8];
+wire [1:0] sw_cmode = sw[8*8 +: 2];
+wire sw_noauto = sw[9*8];
+wire sw_reset = sw[10*8];
 
 // a change of the model resets the machine
 reg mx_d = 1'b0;
@@ -370,6 +371,18 @@ spec_system spec (
 	.file_addr(file_addr),
 	.file_data(file_data),
 	.file_wr(file_wr),
+	.img_mounted(img_mounted),
+	.img_size(img_size),
+	.img_wp(img_wp),
+	.img_data_wr(img_data_wr),
+	.img_data_addr(img_data_addr),
+	.img_data(img_data),
+	.img_result_wr(img_result_wr),
+	.img_result(img_result),
+	.img_sum(img_sum),
+	.img_q_wr(img_q_wr),
+	.img_q_di(img_q_di),
+	.img_q_ack(img_q_ack),
 	.kb_scancode(kb_scancode),
 	.kb_scancode_upd(kb_scancode_upd),
 	.joy(joy_l | joy_r),

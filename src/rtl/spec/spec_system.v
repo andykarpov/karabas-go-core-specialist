@@ -6,7 +6,7 @@
 
  The Specialist and the Specialist-MX: the processor, the memory maps, the ports, the SRAM, the
  video and the keyboard, on one clock of 40 MHz. docs/HARDWARE.md has the maps. The structure is
- that of orion_system of karabas-go-core-orion128. The FDC of the MX comes in phase 3.
+ that of orion_system of karabas-go-core-orion128.
 
  The sound: the Specialist has the beeper on PC5 of the keyboard PPI. The MX has the 8253 at FFEC
  (KF8253 of kitune-san, MIT, from karabas-go-core-pcxt) on 2 MHz: channels 0 and 1 count it,
@@ -20,6 +20,7 @@
    020000  the RAM disk of the MX, disks 0..7 = banks 1..4, both lanes
    200000  the Monitor of the Specialist (up to 12 KB, at C000-EFFF), bytes in a row
    210000  the ROM of the MX (48 KB, at 0000-BFFF in the ROM page), bytes in a row
+   240000  the disk images A and B of the MX (spec_fdd_cache), 820 KB each
  The ROMs arrive by the ROM loader of the mcu, files by the FL items (spec_loader); the machine is
  in reset while either loads.
 
@@ -30,6 +31,10 @@
  200 ms (it sets up the PPI and its variables), then the next opcode fetch reads JMP start instead
  of the memory (autorun). The MX runs RAMFOS for those 200 ms, and the injected jump also selects
  the RAM page, where the file is (the main RAM, as the core of Sorgelig loads it).
+
+ The floppy of the MX: KR1818VG93 at FFE8 (wd1793 of core-orion128, images of 5 sectors of 1024 bytes
+ through spec_fdd_cache and img_sdc, F slots 4 and 5), FFF2 D0 the side, FFF3 D0 the drive. A write to
+ FFF0 stops the CPU until DRQ or the end of the command (READY of the 8080).
 
  mx (the model) is taken during reset only.
 */
@@ -52,6 +57,20 @@ module spec_system (
 	input wire [31:0] file_addr,
 	input wire [7:0] file_data,
 	input wire file_wr,
+
+	// the images of the F items (img_sdc)
+	input wire [7:0] img_mounted,
+	input wire [63:0] img_size,
+	input wire [7:0] img_wp,
+	input wire img_data_wr,
+	input wire [8:0] img_data_addr,
+	input wire [7:0] img_data,
+	input wire img_result_wr,
+	input wire [7:0] img_result,
+	input wire [15:0] img_sum,
+	output wire img_q_wr,
+	output wire [23:0] img_q_di,
+	input wire img_q_ack,
 
 	input wire [7:0] kb_scancode,
 	input wire kb_scancode_upd,
@@ -78,6 +97,7 @@ always @(posedge clk)
 	if (run_reset)
 		mx <= model_mx;
 
+reg fdd_hold = 1'b0;
 wire [15:0] a;
 wire [7:0] cpu_do;
 reg [7:0] cpu_di;
@@ -87,7 +107,7 @@ spec_cpu cpu (
 	.clk(clk),
 	.reset(run_reset),
 	.turbo(turbo),
-	.hold(1'b0),
+	.hold(fdd_hold),
 	.addr(a),
 	.dout(cpu_do),
 	.din(cpu_di),
@@ -117,13 +137,16 @@ wire m_sys = a[15:5] == 11'b11111111110;
 wire [2:0] m_reg = a[4:2];
 wire m_kbd = m_dev && m_reg == 3'd0;   // FFE0
 wire m_usr = m_dev && m_reg == 3'd1;   // FFE4
+wire m_fdc = m_dev && m_reg == 3'd2;   // FFE8
 wire m_pit = m_dev && m_reg == 3'd3;   // FFEC
+wire m_frg = m_dev && m_reg == 3'd4;   // FFF0: sync, density, side, drive
 wire m_col = m_dev && m_reg == 3'd6;   // FFF8
 wire m_pag = m_dev && m_reg == 3'd7;   // FFFC
 
 wire inj_page;
 wire [7:0] pit_do;
 wire pit_out0, pit_out1, pit_out2;
+wire [7:0] fdc_do;
 reg [1:0] mpage = 2'd3;      // 0 RAM, 1 RAM disk, 2 / 3 ROM (written by the address FFFC..FFFF)
 reg [2:0] mdisk = 3'd0;
 reg [7:0] mcolor = 8'h70;    // FFF8: D7..4 points, D3..0 background
@@ -290,6 +313,7 @@ always @* begin
 	else if (inj == 2'd3) cpu_di = rks_start[15:8];
 	else if (sel_kbd) cpu_di = kbd_do;
 	else if (mx && m_pit) cpu_di = pit_do;
+	else if (mx && m_fdc) cpu_di = fdc_do;
 	else if (sel_usr) cpu_di = usr_do;
 	else if (sel_rom || sel_ram || sel_disk) cpu_di = sram_do;
 end
@@ -327,11 +351,236 @@ KF8253 pit (
 
 assign sound = mx ? ~kb_pc[5] & (pit_out0 | pit_out2) : kb_pc[5];
 
-// ------------------------------------------------------------------ the loaders, the SRAM, the video
-wire aux_req, aux_ack;
-wire [21:0] aux_addr;
-wire [7:0] aux_din;
+// ------------------------------------------------------------------ the floppy of the MX
+wire sel_fdc = mx && m_fdc;
+reg fdd_side = 1'b0, fdd_drive = 1'b0;
+wire fdc_drq, fdc_busy;
+always @(posedge clk) begin
+	if (run_reset) begin
+		fdd_side <= 1'b0;
+		fdd_drive <= 1'b0;
+		fdd_hold <= 1'b0;
+	end
+	else begin
+		if (wr_p && mx && m_frg)
+			case (a[1:0])
+				2'd0: fdd_hold <= 1'b1;
+				2'd2: fdd_side <= cpu_do[0];
+				2'd3: fdd_drive <= cpu_do[0];
+				default: ;
+			endcase
+		if (fdc_drq || !fdc_busy)
+			fdd_hold <= 1'b0;
+	end
+end
 
+// 5 MHz. wd1793 samples its strobes on ce only: an access is held from its start to the first ce
+// after its end, with its address and data (as core-orion128)
+reg [2:0] fdc_div = 3'd0;
+always @(posedge clk)
+	fdc_div <= fdc_div + 3'd1;
+wire fdc_ce = fdc_div == 3'd0;
+reg fdc_rd_s = 1'b0, fdc_wr_s = 1'b0;
+reg [1:0] fdc_a_s = 2'd0;
+reg [7:0] fdc_d_s = 8'd0;
+always @(posedge clk) begin
+	if (sel_fdc && (mem_rd || mem_wr)) begin
+		fdc_rd_s <= mem_rd;
+		fdc_wr_s <= mem_wr;
+		fdc_a_s <= a[1:0];
+		if (mem_wr)
+			fdc_d_s <= cpu_do;
+	end
+	else if (fdc_ce) begin
+		fdc_rd_s <= 1'b0;
+		fdc_wr_s <= 1'b0;
+	end
+end
+
+wire [7:0] sdc_img_mounted;
+wire [63:0] sdc_img_size;
+reg disk_a = 1'b0, disk_b = 1'b0;
+always @(posedge clk) begin
+	if (sdc_img_mounted[4]) disk_a <= |sdc_img_size[31:0];
+	if (sdc_img_mounted[5]) disk_b <= |sdc_img_size[31:0];
+end
+
+wire [31:0] sd_lba;
+wire sd_rd, sd_wr, sd_ack_a, sd_ack_b, sd_wr_a, sd_wr_b;
+wire [8:0] sd_addr_a, sd_addr_b;
+wire [7:0] sd_do_a, sd_do_b, sd_buff_din;
+
+wd1793 #(.RWMODE(1), .EDSK(0)) fdc (
+	.clk_sys(clk),
+	.ce(fdc_ce),
+	.reset(run_reset),
+	.io_en(1'b1),
+	.rd(fdc_rd_s),
+	.wr(fdc_wr_s),
+	.addr(sel_fdc ? a[1:0] : fdc_a_s),  // the read data follows the address of the access
+	.din(fdc_d_s),
+	.dout(fdc_do),
+	.drq(fdc_drq),
+	.intrq(),
+	.busy(fdc_busy),
+	.wp(fdd_drive ? img_wp[5] : img_wp[4]),
+	.size_code(3'd3),         // 5 sectors of 1024 bytes
+	.layout(1'b0),            // track, side, sector
+	.side(fdd_side),
+	.ready(fdd_drive ? disk_b : disk_a),
+	.img_mounted(sdc_img_mounted[4] | sdc_img_mounted[5]),
+	.img_size(sdc_img_size[19:0]),
+	.prepare(),
+	.sd_lba(sd_lba),
+	.sd_rd(sd_rd),
+	.sd_wr(sd_wr),
+	.sd_ack(sd_ack_a | sd_ack_b),
+	.sd_buff_addr(fdd_drive ? sd_addr_b : sd_addr_a),
+	.sd_buff_dout(fdd_drive ? sd_do_b : sd_do_a),
+	.sd_buff_din(sd_buff_din),
+	.sd_buff_wr(sd_wr_a | sd_wr_b),
+	.input_active(1'b0),
+	.input_addr(20'd0),
+	.input_data(8'd0),
+	.input_wr(1'b0),
+	.buff_addr(),
+	.buff_read(),
+	.buff_din(8'd0)
+);
+
+wire aux_req, aux_we, aux_ack;
+wire [21:0] aux_addr;
+wire [7:0] aux_din, aux_dout;
+
+wire [7:0] sdc_byte_out_a, sdc_byte_out_b;
+wire [31:0] sdc_sector_a, sdc_sector_b;
+wire sdc_rd_a, sdc_wr_a, sdc_rd_b, sdc_wr_b;
+wire sdc_busy, sdc_done, sdc_error, sdc_in_strobe;
+wire [2:0] sdc_slot;
+wire [8:0] sdc_byte_addr;
+wire [7:0] sdc_in_data;
+
+// no reset: a reset of the machine during a request leaves img_sdc to finish it
+img_sdc #(
+	.OUT_LATENCY(3),
+	.TIMEOUT(24'd8000000)     // 200 ms at 40 MHz
+) sdc (
+	.clk(clk),
+	.reset(1'b0),
+	.img_mounted(img_mounted),
+	.img_size(img_size),
+	.img_data_wr(img_data_wr),
+	.img_data_addr(img_data_addr),
+	.img_data(img_data),
+	.img_result_wr(img_result_wr),
+	.img_result(img_result),
+	.img_sum(img_sum),
+	.img_q_wr(img_q_wr),
+	.img_q_di(img_q_di),
+	.img_q_ack(img_q_ack),
+	.sdc_img_mounted(sdc_img_mounted),
+	.sdc_img_size(sdc_img_size),
+	.sdc_rd({ 2'd0, sdc_rd_b, sdc_rd_a, 4'd0 }),
+	.sdc_wr({ 2'd0, sdc_wr_b, sdc_wr_a, 4'd0 }),
+	.sdc_sector((sdc_rd_a || sdc_wr_a) ? sdc_sector_a : sdc_sector_b),
+	.sdc_busy(sdc_busy),
+	.sdc_done(sdc_done),
+	.sdc_error(sdc_error),
+	.sdc_slot(sdc_slot),
+	.sdc_byte_in_strobe(sdc_in_strobe),
+	.sdc_byte_addr(sdc_byte_addr),
+	.sdc_byte_in_data(sdc_in_data),
+	.sdc_byte_out_data(sdc_slot == 3'd5 ? sdc_byte_out_b : sdc_byte_out_a),
+	.active()
+);
+
+wire fd_req_a, fd_we_a, fd_req_b, fd_we_b, ld_req;
+wire [21:0] fd_addr_a, fd_addr_b, ld_addr;
+wire [7:0] fd_din_a, fd_din_b, ld_din;
+reg [1:0] own = 2'd0;         // the aux port: 1 loader, 2 disk A, 3 disk B
+wire loading = rom_active | file_active;
+
+spec_fdd_cache #(.BASE(22'h240000), .SLOT(3'd4)) cache_a (
+	.clk(clk),
+	.img_mounted(sdc_img_mounted[4]),
+	.img_size(sdc_img_size[31:0]),
+	.sd_rd(sd_rd & ~fdd_drive),
+	.sd_wr(sd_wr & ~fdd_drive),
+	.sd_lba(sd_lba),
+	.sd_ack(sd_ack_a),
+	.sd_buff_addr(sd_addr_a),
+	.sd_buff_dout(sd_do_a),
+	.sd_buff_wr(sd_wr_a),
+	.sd_buff_din(sd_buff_din),
+	.sdc_rd(sdc_rd_a),
+	.sdc_wr(sdc_wr_a),
+	.sdc_sector(sdc_sector_a),
+	.sdc_busy(sdc_busy),
+	.sdc_done(sdc_done),
+	.sdc_error(sdc_error),
+	.sdc_slot(sdc_slot),
+	.sdc_byte_in_strobe(sdc_in_strobe),
+	.sdc_byte_addr(sdc_byte_addr),
+	.sdc_byte_in_data(sdc_in_data),
+	.sdc_byte_out_data(sdc_byte_out_a),
+	.pause(loading),
+	.aux_req(fd_req_a),
+	.aux_we(fd_we_a),
+	.aux_addr(fd_addr_a),
+	.aux_din(fd_din_a),
+	.aux_ack(aux_ack && own == 2'd2),
+	.aux_dout(aux_dout),
+	.filling(),
+	.filled()
+);
+
+spec_fdd_cache #(.BASE(22'h30D000), .SLOT(3'd5)) cache_b (
+	.clk(clk),
+	.img_mounted(sdc_img_mounted[5]),
+	.img_size(sdc_img_size[31:0]),
+	.sd_rd(sd_rd & fdd_drive),
+	.sd_wr(sd_wr & fdd_drive),
+	.sd_lba(sd_lba),
+	.sd_ack(sd_ack_b),
+	.sd_buff_addr(sd_addr_b),
+	.sd_buff_dout(sd_do_b),
+	.sd_buff_wr(sd_wr_b),
+	.sd_buff_din(sd_buff_din),
+	.sdc_rd(sdc_rd_b),
+	.sdc_wr(sdc_wr_b),
+	.sdc_sector(sdc_sector_b),
+	.sdc_busy(sdc_busy),
+	.sdc_done(sdc_done),
+	.sdc_error(sdc_error),
+	.sdc_slot(sdc_slot),
+	.sdc_byte_in_strobe(sdc_in_strobe),
+	.sdc_byte_addr(sdc_byte_addr),
+	.sdc_byte_in_data(sdc_in_data),
+	.sdc_byte_out_data(sdc_byte_out_b),
+	.pause(loading),
+	.aux_req(fd_req_b),
+	.aux_we(fd_we_b),
+	.aux_addr(fd_addr_b),
+	.aux_din(fd_din_b),
+	.aux_ack(aux_ack && own == 2'd3),
+	.aux_dout(aux_dout),
+	.filling(),
+	.filled()
+);
+
+// a master holds its request until the ack and drops it at that edge
+always @(posedge clk) begin
+	if (aux_ack)
+		own <= 2'd0;
+	else if (own == 2'd0)
+		own <= ld_req ? 2'd1 : fd_req_a ? 2'd2 : fd_req_b ? 2'd3 : 2'd0;
+end
+assign aux_req = own == 2'd1 ? ld_req : own == 2'd2 ? fd_req_a : own == 2'd3 ? fd_req_b : 1'b0;
+assign aux_we = own == 2'd1 ? 1'b1 : own == 2'd2 ? fd_we_a : fd_we_b;
+assign aux_addr = own == 2'd1 ? ld_addr : own == 2'd2 ? fd_addr_a : fd_addr_b;
+assign aux_din = own == 2'd1 ? ld_din : own == 2'd2 ? fd_din_a : fd_din_b;
+
+// ------------------------------------------------------------------ the loaders, the SRAM, the video
 spec_loader loader (
 	.clk(clk),
 	.rom_active(rom_active),
@@ -345,10 +594,10 @@ spec_loader loader (
 	.file_wr(file_wr),
 	.rks_start(rks_start),
 	.rks_ok(rks_ok),
-	.aux_req(aux_req),
-	.aux_addr(aux_addr),
-	.aux_din(aux_din),
-	.aux_ack(aux_ack)
+	.aux_req(ld_req),
+	.aux_addr(ld_addr),
+	.aux_din(ld_din),
+	.aux_ack(aux_ack && own == 2'd1)
 );
 
 wire vid_req, vid_valid;
@@ -365,11 +614,11 @@ spec_sram sram (
 	.dout(sram_do),
 	.rd_ok(),
 	.aux_req(aux_req),
-	.aux_we(1'b1),
+	.aux_we(aux_we),
 	.aux_addr(aux_addr),
 	.aux_din(aux_din),
 	.aux_ack(aux_ack),
-	.aux_dout(),
+	.aux_dout(aux_dout),
 	.vid_req(vid_req),
 	.vid_addr(vid_addr),
 	.vid_dout(vid_dout),
