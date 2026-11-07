@@ -7,16 +7,16 @@
  clock pin (bursts at the link clock, no IBUFG / BUFG), FT_CLK_OUT on E7.
 
  The machine is spec_system; all file work goes through the firmware: the ROMs of core.json by the
- ROM loader, .rks files and Monitors by the FL items of the OSD (spec_loader).
+ ROM loader, .rks files, Monitors and the ROM of the MX by the FL items, disk images by the F items.
 
- Clocks: one PLL, VCO 800 MHz (50 * 16): clk_sys 40.0 MHz (/20: everything, 800 x 600 output),
- clk_8 8.0 MHz (/100, FT_CLK_OUT: the FT812 must always have its clock, see karabas-go-notes
- ft-clk-out-required). HDMI: kg_dcm 5 x clk_sys and its inverse.
+ Clocks: one PLL, VCO 800 MHz (50 * 16): clk_sys 40.0 MHz (/20: the machine and 800 x 600 output),
+ clk_8 8.0 MHz (/100), a second PLL for the 27.0 MHz of 720 x 576; clk_pix is 40 or 27 MHz through
+ a BUFGMUX, by Video in the OSD.
 
  Soft switches (the index of the item in the osd of core.json, file items included):
    0 Disk A (F 4)   1 Disk B (F 5)   2 RKS file (FL 1)   3 Monitor (FL 2)   4 MX ROM (FL 3)   5 -
-   6 Model (Specialist / Specialist-MX)   7 CPU speed (2 / 4 MHz)   8 Color (8 colors / 4 colors / mono)
-   9 Autorun (on / off)   10 Reset
+   6 Model (Original / MX)   7 CPU speed (2 / 4 MHz)   8 Color (8 colors / 4 colors / mono)
+   9 Autorun (on / off)   10 Video (800 x 600 60 Hz / 720 x 576 50 Hz)   11 Reset
  A change of the model resets the machine (it is taken in reset).
 */
 
@@ -65,10 +65,10 @@ module karabas_mini_top (
 	input wire FT_INT_N,
 	input wire FT_CLK,
 	input wire FT_DE,
-	output wire FT_CLK_OUT,
 	input wire FT_AUDIO,
 	input wire FT_DISP,
 	output wire FT_RESET,
+	output wire FT_CLK_OUT,
 
 	output wire [2:0] WA,
 	output wire [1:0] WCS_N,
@@ -160,7 +160,8 @@ kg_pll #(
 	.CLKFBOUT_MULT(16),
 	.CLKOUT0_DIVIDE(20),
 	.CLKOUT1_DIVIDE(100),
-	.BUFG_MASK(6'b000011)
+	.CLKOUT2_DIVIDE(20),
+	.BUFG_MASK(6'b000011)  // clk_out[2] raw: the BUFGMUX of the pixel clock
 ) pll (
 	.clk_in(CLK_50MHZ),
 	.rst(1'b0),
@@ -171,13 +172,50 @@ assign clk_sys = pll_clk[0];
 assign clk_8 = pll_clk[1];
 assign areset = ~locked;
 
+// the pixel clock: clk_sys for 800 x 600 at 60 Hz, 27.0 MHz for 720 x 576 at
+// 50 Hz (Video in the OSD), of a second PLL on clk_sys (40 * 27 / 2 / 20: less jitter than a DCM for the
+// HDMI serialiser after it). BUFGMUX takes the raw outputs: the third output of the first PLL (40 MHz,
+// the twin of clk_sys) and that of pll27.
+wire clk40_raw = pll_clk[2];
+wire clk27_raw, locked27;
+wire [5:0] pll27_clk;
+kg_pll #(
+	.CLKIN_PERIOD(25.0),
+	.DIVCLK_DIVIDE(2),
+	.CLKFBOUT_MULT(27),     // VCO 540 MHz
+	.CLKOUT0_DIVIDE(20),    // 27.0 MHz
+	.BUFG_MASK(6'b000000),  // raw: the BUFGMUX of the pixel clock
+	.IBUFG(0)
+) pll27 (
+	.clk_in(clk_sys),
+	.rst(areset),
+	.clk_out(pll27_clk),
+	.locked(locked27)
+);
+assign clk27_raw = pll27_clk[0];
+wire pal;                     // 720 x 576 at 50 Hz (sw_video, from the soft switches)
+wire clk_pix;
+BUFGMUX pixmux (.I0(clk40_raw), .I1(clk27_raw), .S(pal), .O(clk_pix));
+
+// a change of the video mode: the pixel clock changes, the clocks after it restart
+reg pal_d = 1'b0;
+reg [7:0] vrst = 8'hFF;
+always @(posedge clk_sys) begin
+	pal_d <= pal;
+	if (pal != pal_d || areset || (pal && !locked27))
+		vrst <= 8'hFF;
+	else if (vrst != 8'd0)
+		vrst <= vrst - 8'd1;
+end
+wire video_reset = vrst != 8'd0;
+
 kg_dcm #(
 	.CLKIN_PERIOD(25.0),
 	.CLKFX_MULTIPLY(5),
 	.CLKFX_DIVIDE(1)
 ) pllx5 (
-	.clk_in(clk_sys),
-	.rst(areset),
+	.clk_in(clk_pix),
+	.rst(video_reset),
 	.clk_fx(clk_hdmi),
 	.clk_fx180(clk_hdmi_n),
 	.clk_0(),
@@ -191,10 +229,10 @@ ODDR2 oddr_ft_clk (.Q(FT_CLK_OUT), .C0(clk_8), .C1(~clk_8), .CE(1'b1), .D0(1'b1)
 
 
 wire mcu_burst_ready;
+wire mcu_sck = MCU_SCK, mcu_sck_ibufg = MCU_SCK;  // not on a clock pin before rev.G
 assign MCU_IO[1] = mcu_burst_ready;
 assign MCU_IO[0] = 1'bz;
 assign MCU_IO[3:2] = 2'bzz;
-wire mcu_sck = MCU_SCK, mcu_sck_ibufg = MCU_SCK;  // not on a clock pin before rev.G
 
 wire [7:0] kb_scancode;
 wire [7:0] uart_rx_data, uart_rx_idx, uart_tx_data;
@@ -228,7 +266,7 @@ kg_mcu #(
 	.ENABLE_UART(0),
 	.ENABLE_MATRIX(0),
 	.ENABLE_DEBUG(0),
-	.ENABLE_IMG(1),      // the floppy of the MX: the images of the F items
+	.ENABLE_IMG(1),      // the disks: the images of the F items
 	.ENABLE_IMG_WP(1),
 	.ENABLE_FILE(1),
 	.FILE_CMDS(0),       // the ioctl commands of the FL items
@@ -329,8 +367,8 @@ assign SD_CLK = mcu_sck_ibufg;
 
 // ------------------------------------------------------------------ soft switches
 
-wire [11*8-1:0] sw;
-kg_soft_switches #(.N(11)) soft_switches (
+wire [12*8-1:0] sw;
+kg_soft_switches #(.N(12)) soft_switches (
 	.clk(clk_sys),
 	.command(softsw_command),
 	.regs(sw),
@@ -340,7 +378,8 @@ wire sw_mx = sw[6*8];
 wire sw_turbo = sw[7*8];
 wire [1:0] sw_cmode = sw[8*8 +: 2];
 wire sw_noauto = sw[9*8];
-wire sw_reset = sw[10*8];
+assign pal = sw[10*8];
+wire sw_reset = sw[11*8];
 
 // a change of the model resets the machine
 reg mx_d = 1'b0;
@@ -390,11 +429,13 @@ spec_system spec (
 	.kb_scancode(kb_scancode),
 	.kb_scancode_upd(kb_scancode_upd),
 	.joy(joy_l | joy_r),
+	.clk_pix(clk_pix),
+	.pal(pal),
 	.rgb(video_rgb),
 	.hs(video_hs),
 	.vs(video_vs),
 	.de(video_de),
-	.tape_in(1'b1),      // phase 4
+	.tape_in(TAPE_IN),
 	.tape_out(TAPE_OUT),
 	.sound(sound),
 	.mx(mx),
@@ -405,19 +446,33 @@ spec_system spec (
 
 // ------------------------------------------------------------------ OSD
 
+// the OSD commands of kg_mcu (clk_sys) into clk_pix: a word that changes is a command, it crosses
+// through a fifo and comes out as a change again (as core-msx)
+reg [15:0] osd_cmd_d = 16'd0;
+always @(posedge clk_sys)
+	osd_cmd_d <= osd_command;
+wire osd_fifo_empty;
+wire [15:0] osd_cmd_pix;
+kg_async_fifo #(.DW(16), .AW(4)) osd_fifo (
+	.wclk(clk_sys), .wreset(areset), .wr(osd_command != osd_cmd_d), .din(osd_command), .full(),
+	.rclk(clk_pix), .rreset(areset), .rd(!osd_fifo_empty), .dout(osd_cmd_pix), .empty(osd_fifo_empty),
+	.rcount()
+);
+
 // in the middle of 800 x 600: the counters start at the leading edge of the syncs, a step is two
 // pixels / lines: the picture starts 216 pixels and 27 lines after them, the OSD (512 x 416) 144
-// pixels and 92 lines into it
+// pixels and 92 lines into it. 720 x 576: the OSD at x 104, 236 pixels (118 steps) after hsync, and
+// 124 lines (62 steps) after vsync
 wire [23:0] osd_rgb;
-kg_osd_overlay #(.H_OFFSET(180), .V_OFFSET(59), .H_DIV4_WIDTH(1100)) osd (
-	.clk(clk_sys),
+kg_osd_overlay #(.H_DIV4_WIDTH(1100), .V_OFFSET_IN(1), .H_OFFSET_IN(1)) osd (
+	.clk(clk_pix),
 	.rgb_i(video_rgb),
 	.rgb_o(osd_rgb),
 	.hsync_i(video_hs),
 	.vsync_i(video_vs),
-	.v_offset(11'd0),
-	.h_offset(11'd0),
-	.osd_command(osd_command)
+	.v_offset(pal ? 11'd62 : 11'd59),
+	.h_offset(pal ? 11'd118 : 11'd180),
+	.osd_command(osd_cmd_pix)
 );
 
 // ------------------------------------------------------------------ audio
@@ -430,32 +485,61 @@ kg_sigma_delta_dac dac_r (.clk(clk_sys), .reset(areset), .din(audio), .dout(AUDI
 
 // ------------------------------------------------------------------ HDMI
 
-// the audio sample clock of hdmi_tx: 48 kHz of clk_sys (+ 3 per clock, modulo 2500)
-reg [11:0] aud_acc = 12'd0;
-reg aud_stb = 1'b0;
+// the audio sample into clk_pix: held on clk_sys at 48 kHz (a toggle tells), taken on clk_pix at the
+// change of the synchronised toggle (the sample is stable then: it changes 20 us later), as core-msx
+reg [15:0] smp = 16'd0;
+reg smp_tog = 1'b0;
+reg [11:0] smp_acc = 12'd0;   // 48 kHz from 40 MHz: + 3 per clock, modulo 2500
 always @(posedge clk_sys) begin
+	if (smp_acc >= 12'd2500 - 12'd3) begin
+		smp_acc <= smp_acc + 12'd3 - 12'd2500;
+		smp <= audio;
+		smp_tog <= ~smp_tog;
+	end
+	else
+		smp_acc <= smp_acc + 12'd3;
+end
+wire smp_tog_pix;
+kg_sync smp_sync (.clk(clk_pix), .d(smp_tog), .q(smp_tog_pix));
+reg smp_tog_pix_d = 1'b0;
+reg [23:0] hdmi_smp = 24'd0;
+always @(posedge clk_pix) begin
+	smp_tog_pix_d <= smp_tog_pix;
+	if (smp_tog_pix != smp_tog_pix_d)
+		hdmi_smp <= { smp, 8'd0 };
+end
+
+// the audio sample clock of hdmi_tx: 48 kHz of clk_pix (40 MHz: + 3 per clock modulo 2500; 27 MHz:
+// + 16 modulo 9000)
+reg [13:0] aud_acc = 14'd0;
+reg aud_stb = 1'b0;
+wire [13:0] aud_step = pal ? 14'd16 : 14'd3;
+wire [13:0] aud_mod = pal ? 14'd9000 : 14'd2500;
+always @(posedge clk_pix) begin
 	aud_stb <= 1'b0;
-	if (aud_acc >= 12'd2500 - 12'd3) begin
-		aud_acc <= aud_acc + 12'd3 - 12'd2500;
+	if (aud_acc >= aud_mod - aud_step) begin
+		aud_acc <= aud_acc + aud_step - aud_mod;
 		aud_stb <= 1'b1;
 	end
 	else
-		aud_acc <= aud_acc + 12'd3;
+		aud_acc <= aud_acc + aud_step;
 end
+wire dvi_only_pix;
+kg_sync dvi_sync (.clk(clk_pix), .d(dvi_only), .q(dvi_only_pix));
 
-// 800 x 600: positive syncs
+// 800 x 600: positive syncs; 720 x 576: negative
 hdmi_tx #(.SAMPLE_FREQ(48000)) hdmi (
-	.clk(clk_sys),
+	.clk(clk_pix),
 	.sclk(clk_hdmi),
 	.sclk_n(clk_hdmi_n),
-	.reset(areset || ~lockedx5),
+	.reset(video_reset || ~lockedx5),
 	.rgb(osd_rgb),
-	.vsync(video_vs),
-	.hsync(video_hs),
+	.vsync(pal ? ~video_vs : video_vs),
+	.hsync(pal ? ~video_hs : video_hs),
 	.de(video_de),
-	.audio_en(~dvi_only),
-	.audio_l({ audio, 8'd0 }),
-	.audio_r({ audio, 8'd0 }),
+	.audio_en(~dvi_only_pix),
+	.audio_l(hdmi_smp),
+	.audio_r(hdmi_smp),
 	.audio_clk(aud_stb),
 	.tx_clk_n(TMDS_N[3]),
 	.tx_clk_p(TMDS_P[3]),

@@ -1,17 +1,17 @@
 {
     "id": "specialist",
     "name": "Specialist",
-    "build": "26110703",
+    "build": "26110704",
     "visible": true,
     "type": "osd",
     "order": 15,
     "eeprom_bank": 255,
-    "drives": ["FDD0", "FDD1"],
-    "roms": [
+        "roms": [
     {"filename": "roms/spec_m2.rom", "address": 2097152},
     {"filename": "roms/spmx.rom", "address": 2162688}
     ],
     "boards": {
+        "go": {"bitstream": "karabas_go.bin"},
         "mini": {"bitstream": "karabas_mini.bin"},
         "minig": {"bitstream": "karabas_minig.bin"}
     },
@@ -26,6 +26,7 @@
     {"type": "S", "name": "CPU speed", "options": ["2 MHz", "4 MHz"], "default": 0, "hotkey": "Menu+S"},
     {"type": "S", "name": "Color", "options": ["8 colors", "4 colors", "Mono"], "default": 0, "hotkey": "Menu+C"},
     {"type": "S", "name": "Autorun", "options": ["On", "Off"], "default": 0, "hotkey": "Menu+A"},
+    {"type": "S", "name": "Video", "options": ["800x600 60Hz", "720x576 50Hz"], "default": 0},
     {"type": "T", "name": "Reset", "hotkey": "F12"}
     ]
 }

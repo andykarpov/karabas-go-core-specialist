@@ -1,3 +1,9 @@
+// WD1793, WD1772, WD1773 replica (with write capability)
+// Copyright (C) 2007,2008 Viacheslav Slavinsky
+// Copyright (C) 2016 Sorgelig
+// GPL v2 or (at your option) any later version. Converted to Verilog (sv2v) in karabas-go-core-msx,
+// Write Track added in karabas-go-core-orion128. The header was lost in the conversion: restored here.
+
 module wd1793 (
 	clk_sys,
 	ce,

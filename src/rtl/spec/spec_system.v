@@ -76,6 +76,10 @@ module spec_system (
 	input wire kb_scancode_upd,
 	input wire [12:0] joy,
 
+	// the picture: 800 x 600 at 60 Hz on clk, or 720 x 576 at 50 Hz on clk_pix (pal, 27 MHz); hs / vs
+	// active high
+	input wire clk_pix,
+	input wire pal,
 	output wire [23:0] rgb,
 	output wire hs,
 	output wire vs,
@@ -177,6 +181,11 @@ always @(posedge clk)
 	else if (mem_rd && a[15:14] == 2'b11)
 		ipl <= 1'b0;
 
+// the tape input on PB0: high on the line reads 0 (Emu80)
+reg [1:0] tape_s = 2'd0;
+always @(posedge clk)
+	tape_s <= { tape_s[0], tape_in };
+
 wire sel_kbd = mx ? m_kbd : o_kbd;
 wire sel_usr = mx ? m_usr : o_usr;
 wire sel_dev = mx ? m_dev : (o_usr | o_kbd);
@@ -189,7 +198,7 @@ wire kb_nr_n;
 
 spec_ppi ppi_kbd (
 	.clk(clk), .reset(run_reset), .a(a[1:0]), .wr(wr_p & sel_kbd), .din(cpu_do), .dout(kbd_do),
-	.pa_i(kb_pa_i), .pb_i({ kb_pb_i, kb_nr_n, tape_in }), .pc_i({ 4'hF, kb_pc_i }),
+	.pa_i(kb_pa_i), .pb_i({ kb_pb_i, kb_nr_n, ~tape_s[1] }), .pc_i({ 4'hF, kb_pc_i }),
 	.pa_in(), .pb_in(), .pcl_in(),
 	.pa_o(kb_pa), .pb_o(kb_pb), .pc_o(kb_pc)
 );
@@ -628,18 +637,45 @@ spec_sram sram (
 	.MWR_N(MWR_N)
 );
 
+wire [23:0] v6_rgb, v5_rgb;
+wire v6_hs, v6_vs, v6_de, v5_hs, v5_vs, v5_de, v6_req, v5_req;
+wire [20:0] v6_addr, v5_addr;
+
 spec_video video (
 	.clk(clk),
 	.mx(mx),
 	.cmode(cmode),
-	.vid_req(vid_req),
-	.vid_addr(vid_addr),
+	.vid_req(v6_req),
+	.vid_addr(v6_addr),
 	.vid_dout(vid_dout),
-	.vid_valid(vid_valid),
-	.rgb(rgb),
-	.hs(hs),
-	.vs(vs),
-	.de(de)
+	.vid_valid(vid_valid & ~pal),
+	.rgb(v6_rgb),
+	.hs(v6_hs),
+	.vs(v6_vs),
+	.de(v6_de)
 );
+
+spec_video_576 video576 (
+	.clk(clk),
+	.clk_pix(clk_pix),
+	.en(pal),
+	.mx(mx),
+	.cmode(cmode),
+	.vid_req(v5_req),
+	.vid_addr(v5_addr),
+	.vid_dout(vid_dout),
+	.vid_valid(vid_valid & pal),
+	.rgb(v5_rgb),
+	.hs(v5_hs),
+	.vs(v5_vs),
+	.de(v5_de)
+);
+
+assign vid_req = pal ? v5_req : v6_req;
+assign vid_addr = pal ? v5_addr : v6_addr;
+assign rgb = pal ? v5_rgb : v6_rgb;
+assign hs = pal ? v5_hs : v6_hs;
+assign vs = pal ? v5_vs : v6_vs;
+assign de = pal ? v5_de : v6_de;
 
 endmodule
