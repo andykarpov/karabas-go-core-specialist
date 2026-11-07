@@ -12,6 +12,9 @@
  (40 / 20 clocks), so no wait is needed at either speed. hold (the READY pin) stops the CPU for a
  slow device: the FDD sync port FFF0 of the Specialist-MX. Change turbo at any time: it takes
  effect at the start of the next state.
+
+ fetch: the status word of the cycle (D5, M1, on the data bus while SYNC) says that it fetches an
+ opcode; it holds until the next SYNC.
 */
 
 module spec_cpu (
@@ -25,6 +28,7 @@ module spec_cpu (
 	input wire [7:0] din,
 	output wire mem_rd,
 	output wire mem_wr,
+	output reg fetch = 1'b0,
 	output wire inte
 );
 
@@ -44,7 +48,7 @@ always @(posedge clk) begin
 	f2 <= t4 ? (cnt >= 5'd3 && cnt <= 5'd8) : (cnt >= 5'd5 && cnt <= 5'd18);
 end
 
-wire dbin, wr_n;
+wire dbin, wr_n, sync;
 
 vm80a_core cpu80 (
 	.pin_clk(clk),
@@ -62,10 +66,14 @@ vm80a_core cpu80 (
 	.pin_wait(),
 	.pin_int(1'b0),
 	.pin_inte(inte),
-	.pin_sync(),
+	.pin_sync(sync),
 	.pin_dbin(dbin),
 	.pin_wr_n(wr_n)
 );
+
+always @(posedge clk)
+	if (sync)
+		fetch <= dout[5];
 
 assign mem_rd = dbin;
 assign mem_wr = ~wr_n;
