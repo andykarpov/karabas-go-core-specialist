@@ -1,7 +1,7 @@
 {
     "id": "specialist",
     "name": "Specialist",
-    "build": "26110702",
+    "build": "26110703",
     "visible": true,
     "type": "osd",
     "order": 15,
@@ -16,11 +16,13 @@
         "minig": {"bitstream": "karabas_minig.bin"}
     },
     "osd": [
+    {"type": "F", "name": "Disk A", "slot": 4, "extensions": ".odi,.img", "dir": "/specialist", "hotkey": "Menu+F7"},
+    {"type": "F", "name": "Disk B", "slot": 5, "extensions": ".odi,.img", "dir": "/specialist", "hotkey": "Menu+F8"},
     {"type": "FL", "name": "RKS file", "slot": 1, "extensions": ".rks", "dir": "/specialist", "hotkey": "Menu+F2"},
     {"type": "FL", "name": "Monitor", "slot": 2, "extensions": ".rom,.bin", "dir": "/specialist", "hotkey": "Menu+F4", "autoload": 1},
     {"type": "FL", "name": "MX ROM", "slot": 3, "extensions": ".rom,.bin", "dir": "/specialist", "hotkey": "Menu+F5", "autoload": 1},
     {"type": "-"},
-    {"type": "S", "name": "Model", "options": ["Specialist", "Specialist-MX"], "default": 0, "hotkey": "Menu+M"},
+    {"type": "S", "name": "Model", "options": ["Original", "MX"], "default": 0, "hotkey": "Menu+M"},
     {"type": "S", "name": "CPU speed", "options": ["2 MHz", "4 MHz"], "default": 0, "hotkey": "Menu+S"},
     {"type": "S", "name": "Color", "options": ["8 colors", "4 colors", "Mono"], "default": 0, "hotkey": "Menu+C"},
     {"type": "S", "name": "Autorun", "options": ["On", "Off"], "default": 0, "hotkey": "Menu+A"},
