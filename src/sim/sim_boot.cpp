@@ -44,7 +44,7 @@ static int mcu_op = 0, mcu_pos = -1, mcu_gap = 0, mcu_wcnt = 0, mcu_bank = 0, mc
 static int64_t mcu_wait = -1;
 static uint8_t mcu_wbuf[512];
 static uint16_t mcu_wsum = 0;
-static int mount_wait = 2000;
+static int mount_wait = 2000, mount_sd = 0;
 static int disk_reads = 0, disk_writes = 0;
 
 static void mcu_clk() {
@@ -55,6 +55,11 @@ static void mcu_clk() {
 	if (mount_wait > 0 && --mount_wait == 0) {
 		top->img_size = disks[4].size();
 		top->img_mounted = 1 << 4;
+		mount_sd = 2000;
+	}
+	if (mount_sd > 0 && --mount_sd == 0 && !disks[6].empty()) {
+		top->img_size = disks[6].size();
+		top->img_mounted = 1 << 6;
 	}
 	if (top->img_q_wr && !top->img_q_ack) {
 		uint32_t w = top->img_q_di;
@@ -151,7 +156,8 @@ int main(int argc, char **argv) {
 	std::vector<Ev> evs;
 	int ms = 1000;
 	const char *ppm = nullptr, *frame = nullptr, *save_disk = nullptr;
-	bool mx = false, turbo = false, autorun = true;
+	bool mx = false, turbo = false, autorun = true, z80 = false, ay = false;
+	int model = 0, ext = 0, kbd = 0;
 	int cmode = 0;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--rom") || !strcmp(argv[i], "--expect")) {
@@ -184,7 +190,20 @@ int main(int argc, char **argv) {
 			has_disk = true;
 		}
 		else if (!strcmp(argv[i], "--save-disk")) save_disk = argv[++i];
-		else if (!strcmp(argv[i], "--mx")) mx = true;
+		else if (!strcmp(argv[i], "--mx")) { mx = true; model = 1; }
+		else if (!strcmp(argv[i], "--mx2")) { mx = true; model = 2; }
+		else if (!strcmp(argv[i], "--z80")) z80 = true;
+		else if (!strcmp(argv[i], "--ay")) ay = true;
+		else if (!strcmp(argv[i], "--ext")) ext = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--kbd")) kbd = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--sd")) {
+			FILE *f = fopen(argv[++i], "rb");
+			if (!f) { perror(argv[i]); return 2; }
+			int c;
+			while ((c = fgetc(f)) != EOF) disks[6].push_back(c);
+			fclose(f);
+			has_disk = true;
+		}
 		else if (!strcmp(argv[i], "--turbo")) turbo = true;
 		else if (!strcmp(argv[i], "--noauto")) autorun = false;
 		else if (!strcmp(argv[i], "--cmode")) cmode = atoi(argv[++i]);
@@ -193,7 +212,11 @@ int main(int argc, char **argv) {
 		else if (!strcmp(argv[i], "--frame")) frame = argv[++i];
 		else { fprintf(stderr, "bad option %s\n", argv[i]); return 2; }
 	}
-	top->model_mx = mx;
+	top->model = model;
+	top->cpu_z80 = z80;
+	top->ay_on = ay;
+	top->ext_port = ext;
+	top->kb_layout = kbd;
 	top->turbo = turbo;
 	top->cmode = cmode;
 	top->autorun = autorun;
@@ -215,7 +238,7 @@ int main(int argc, char **argv) {
 	top->rom_active = 0;
 	uint64_t t0 = clks;
 	uint64_t end = t0 + (uint64_t)ms * 40000;
-	int edges_n = 0, prev = 0;
+	int edges_n = 0, prev = 0, ay_max = 0;
 	size_t next = 0;
 	while (clks < end) {
 		for (auto &e : evs) {
@@ -243,6 +266,7 @@ int main(int argc, char **argv) {
 		tick();
 		if (top->sound && !prev) edges_n++;
 		prev = top->sound;
+		if (top->ay_sound > ay_max) ay_max = top->ay_sound;
 	}
 	(void)next;
 	std::vector<uint8_t> scr(48 * 256), col(48 * 256);
@@ -256,7 +280,7 @@ int main(int argc, char **argv) {
 			sum = sum * 31 + b;
 			lit += __builtin_popcount(b);
 		}
-	printf("%s %s %d ms: sound edges %d screen sum %08x lit %u\n", mx ? "MX" : "Specialist", turbo ? "4MHz" : "2MHz", ms, edges_n, sum, lit);
+	printf("%s %s %s %d ms: sound edges %d ay %d screen sum %08x lit %u\n", mx ? "MX" : "Specialist", z80 ? "Z80" : "8080", turbo ? "4MHz" : "2MHz", ms, edges_n, ay_max, sum, lit);
 	if (has_disk) printf("disk: %d sectors read, %d written\n", disk_reads, disk_writes);
 	if (save_disk) {
 		FILE *f = fopen(save_disk, "wb");

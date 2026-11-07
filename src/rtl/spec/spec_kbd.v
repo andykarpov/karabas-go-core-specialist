@@ -13,8 +13,8 @@
  The layout is that of Emu80 (KbdLayout / SpecKbdLayout, QWERTY mode): a host key gives the
  Specialist key at its place, letters and digits as written, = is :, ' is ^, ` is @, Ctrl is PV
  (repeat), PgUp is STR (clear; F12 of Emu80 is the Reset of the OSD here), PgDn and End are PS (line feed), Insert and Caps Lock are
- RUS/LAT, Shift is NR. The MX (RAMFOS) moves F1..F10, Esc and Tab (m_keyMatrixMx); mx changes only
- during reset.
+ RUS/LAT, Shift is NR. The RAMFOS matrix (m_keyMatrixMx) moves F1..F10, Esc and Tab: mx. The Lik has
+ Esc on F1 and no Tab: lik. Change them only during reset.
 
  joy: a joystick as keys: the arrows, A Space, B and Start Enter (as core-orion128).
 */
@@ -22,7 +22,8 @@
 module spec_kbd (
 	input wire clk,
 	input wire reset,
-	input wire mx,
+	input wire mx,              // the RAMFOS matrix
+	input wire lik,
 	input wire [7:0] scancode,
 	input wire scancode_upd,    // toggles with each byte
 	input wire [12:0] joy,      // up, down, left, right, start, A, B in bits 1..7
@@ -54,8 +55,8 @@ always @* begin
 		9'h014, 9'h114: pos = mx ? 8'd0 : k(4'd3, 3'd0);  // Ctrl: PV
 		9'h16B: pos = k(4'd4, 3'd0);             // Left
 		9'h029: pos = k(4'd5, 3'd0);             // Space
-		9'h076: pos = mx ? k(4'd11, 3'd5) : k(4'd6, 3'd0);  // Esc
-		9'h00D: pos = mx ? k(4'd3, 3'd0) : k(4'd7, 3'd0);   // Tab
+		9'h076: pos = lik ? k(4'd11, 3'd5) : mx ? k(4'd11, 3'd5) : k(4'd6, 3'd0);  // Esc
+		9'h00D: pos = lik ? 8'd0 : mx ? k(4'd3, 3'd0) : k(4'd7, 3'd0);              // Tab
 		9'h172: pos = k(4'd8, 3'd0);             // Down
 		9'h175: pos = k(4'd9, 3'd0);             // Up
 		9'h16C: pos = k(4'd10, 3'd0);            // Home

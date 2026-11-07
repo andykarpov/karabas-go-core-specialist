@@ -10,6 +10,8 @@
    slot 1  a tape file .rks into the main RAM
    slot 2  a Monitor of the Specialist at 200000 (up to 12 KB, C000-EFFF)
    slot 3  a ROM of the MX at 210000 (up to 48 KB)
+   slot 7  the ROM of SDOS at 21C000 (up to 4 KB, D000-DFFF of the Specialist)
+   slot 0  the ROM of the MX2 at 220000 (64 KB)
 
  .rks, as Emu80 SpecFileLoader reads it: an optional E6, an optional name (D9 D9 D9, the name, E6;
  one or two D9 alone are the start address),
@@ -68,6 +70,16 @@ always @(posedge clk) begin
 		else if (file_slot == 8'd3) begin
 			pend <= 1'b1;
 			pend_addr <= { 6'b100001, file_addr[15:0] };
+			pend_data <= file_data;
+		end
+		else if (file_slot == 8'd7) begin
+			pend <= 1'b1;
+			pend_addr <= { 10'b1000011100, file_addr[11:0] };
+			pend_data <= file_data;
+		end
+		else if (file_slot == 8'd0) begin
+			pend <= 1'b1;
+			pend_addr <= { 6'b100010, file_addr[15:0] };
 			pend_data <= file_data;
 		end
 		else if (file_slot == 8'd1) begin

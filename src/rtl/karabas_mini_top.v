@@ -14,10 +14,12 @@
  a BUFGMUX, by Video in the OSD.
 
  Soft switches (the index of the item in the osd of core.json, file items included):
-   0 Disk A (F 4)   1 Disk B (F 5)   2 RKS file (FL 1)   3 Monitor (FL 2)   4 MX ROM (FL 3)   5 -
-   6 Model (Original / MX)   7 CPU speed (2 / 4 MHz)   8 Color (8 colors / 4 colors / mono)
-   9 Autorun (on / off)   10 Video (800 x 600 60 Hz / 720 x 576 50 Hz)   11 Reset
- A change of the model resets the machine (it is taken in reset).
+   0 Disk A (F 4)   1 Disk B (F 5)   2 SD card (F 6)   3 RKS file (FL 1)   4 Monitor (FL 2)
+   5 MX ROM (FL 3)   6 SDOS ROM (FL 7)   7 MX2 ROM (FL 0)   8 -   9 Model (Original / MX / MX2)
+   10 CPU (KR580VM80A / Z80)   11 CPU speed (2 / 4 MHz)   12 Keyboard (Auto / Original / RAMFOS / Lik)
+   13 Color (8 colors / 4 colors / mono)   14 Ext port (None / Mouse / SDOS)   15 AY (off / on)
+   16 Autorun (on / off)   17 Video (800 x 600 60 Hz / 720 x 576 50 Hz)   18 Reset
+ A change of the model or the processor resets the machine (they are taken in reset).
 */
 
 module karabas_mini_top (
@@ -238,6 +240,10 @@ wire [7:0] kb_scancode;
 wire [7:0] uart_rx_data, uart_rx_idx, uart_tx_data;
 wire uart_tx_wr;
 wire [12:0] joy_l, joy_r;
+wire [7:0] ms_x, ms_y;
+wire [3:0] ms_z;
+wire [2:0] ms_b;
+wire ms_upd;
 wire kb_scancode_upd;
 wire rom_active, rom_wr;
 wire [31:0] rom_addr;
@@ -291,6 +297,11 @@ kg_mcu #(
 	.KB_SCANCODE_UPD(kb_scancode_upd),
 	.JOY_L(joy_l),
 	.JOY_R(joy_r),
+	.MS_X(ms_x),
+	.MS_Y(ms_y),
+	.MS_Z(ms_z),
+	.MS_B(ms_b),
+	.MS_UPD(ms_upd),
 
 	.ROMLOADER_ACTIVE(rom_active),
 	.ROMLOAD_ADDR(rom_addr),
@@ -367,26 +378,30 @@ assign SD_CLK = mcu_sck_ibufg;
 
 // ------------------------------------------------------------------ soft switches
 
-wire [12*8-1:0] sw;
-kg_soft_switches #(.N(12)) soft_switches (
+wire [19*8-1:0] sw;
+kg_soft_switches #(.N(19)) soft_switches (
 	.clk(clk_sys),
 	.command(softsw_command),
 	.regs(sw),
 	.upd()
 );
-wire sw_mx = sw[6*8];
-wire sw_turbo = sw[7*8];
-wire [1:0] sw_cmode = sw[8*8 +: 2];
-wire sw_noauto = sw[9*8];
-assign pal = sw[10*8];
-wire sw_reset = sw[11*8];
+wire [1:0] sw_model = sw[9*8 +: 2];
+wire sw_z80 = sw[10*8];
+wire sw_turbo = sw[11*8];
+wire [1:0] sw_kbd = sw[12*8 +: 2];
+wire [1:0] sw_cmode = sw[13*8 +: 2];
+wire [1:0] sw_ext = sw[14*8 +: 2];
+wire sw_ay = sw[15*8];
+wire sw_noauto = sw[16*8];
+assign pal = sw[17*8];
+wire sw_reset = sw[18*8];
 
-// a change of the model resets the machine
-reg mx_d = 1'b0;
+// a change of the model or the processor resets the machine
+reg [2:0] mx_d = 3'd0;
 reg [7:0] mx_rst = 8'd0;
 always @(posedge clk_sys) begin
-	mx_d <= sw_mx;
-	if (sw_mx != mx_d)
+	mx_d <= { sw_z80, sw_model };
+	if ({ sw_z80, sw_model } != mx_d)
 		mx_rst <= 8'hFF;
 	else if (mx_rst != 8'd0)
 		mx_rst <= mx_rst - 8'd1;
@@ -397,12 +412,17 @@ end
 wire [23:0] video_rgb;
 wire video_hs, video_vs, video_de;
 wire sound, mx;
+wire [9:0] ay_sound;
 
 spec_system spec (
 	.clk(clk_sys),
 	.reset(areset || sw_reset || mcu_busy || mx_rst != 8'd0),
-	.model_mx(sw_mx),
+	.model(sw_model),
+	.cpu_z80(sw_z80),
 	.turbo(sw_turbo),
+	.kb_layout(sw_kbd),
+	.ext_port(sw_ext),
+	.ay_on(sw_ay),
 	.cmode(sw_cmode),
 	.autorun(~sw_noauto),
 	.rom_active(rom_active),
@@ -429,6 +449,11 @@ spec_system spec (
 	.kb_scancode(kb_scancode),
 	.kb_scancode_upd(kb_scancode_upd),
 	.joy(joy_l | joy_r),
+	.ms_x(ms_x),
+	.ms_y(ms_y),
+	.ms_z(ms_z),
+	.ms_b(ms_b),
+	.ms_upd(ms_upd),
 	.clk_pix(clk_pix),
 	.pal(pal),
 	.rgb(video_rgb),
@@ -438,7 +463,12 @@ spec_system spec (
 	.tape_in(TAPE_IN),
 	.tape_out(TAPE_OUT),
 	.sound(sound),
+	.ay_sound(ay_sound),
 	.mx(mx),
+	.img_phys_wr(1'b0),
+	.img_phys(16'd0),
+	.FDC_INDEX(1'b0), .FDC_DRIVE(), .FDC_MOTOR(), .FDC_DIR(), .FDC_STEP(), .FDC_WDATA(), .FDC_WGATE(),
+	.FDC_TR00(1'b0), .FDC_WPRT(1'b0), .FDC_RDATA(1'b0), .FDC_SIDE_N(),
 	.MA(MA),
 	.MD(MD),
 	.MWR_N(MWR_N)
@@ -478,7 +508,7 @@ kg_osd_overlay #(.H_DIV4_WIDTH(1100), .V_OFFSET_IN(1), .H_OFFSET_IN(1)) osd (
 // ------------------------------------------------------------------ audio
 
 // the MX hears its tape output too (Emu80), quieter
-wire [15:0] audio = (sound ? 16'h1800 : 16'h0000) + (mx && TAPE_OUT ? 16'h0600 : 16'h0000);
+wire [15:0] audio = (sound ? 16'h1800 : 16'h0000) + (mx && TAPE_OUT ? 16'h0600 : 16'h0000) + { 2'b00, ay_sound, 4'b0000 };
 
 kg_sigma_delta_dac dac_l (.clk(clk_sys), .reset(areset), .din(audio), .dout(AUDIO_L));
 kg_sigma_delta_dac dac_r (.clk(clk_sys), .reset(areset), .din(audio), .dout(AUDIO_R));
