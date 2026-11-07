@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A new core of the Soviet home computers Specialist (KR580VM80A, 2 MHz, 384 x 256, 1987) and Specialist-MX (RAMFOS, RAM disk, floppy, 16 colours, 8253 timer, 1991) for the Karabas Go, Mini and Mini G boards: Xilinx Spartan-6 XC6SLX25, ISE 14.7 (XST).
 
-Status: phase 0 done: the machine without video and keyboard boots Monitor-2 and RAMFOS in simulation. Docs, in Russian: `docs/PLAN.md` (research, decisions, architecture, phases), `docs/HARDWARE.md` (memory maps and ports), `docs/BACKLOG.md` (open decisions, things to verify). Follow the phases; record a changed decision in PLAN.md.
+Status: phase 1 done: the Specialist on Mini G (video, keyboard, beeper, OSD, .rks with autorun), build 26110701, checked on the board (Monitor, games, RAMFOS shell of the MX); the sound not heard yet. The Mini top is there too (built, not tried). Next: phase 2, the MX. Docs, in Russian: `docs/PLAN.md` (research, decisions, architecture, phases), `docs/HARDWARE.md` (memory maps and ports), `docs/BACKLOG.md` (open decisions, things to verify). Follow the phases; record a changed decision in PLAN.md.
 
 All file work goes through the firmware (OSD, `FL` / `F` items, burst): no loader or soft CPU in the core. The machine is our own synchronous Verilog. Emu80 v4 (`vpyk/emu80v4`, GPL-3) is the reference of the behaviour; the MiST / MiSTer core of Sorgelig has no license file, so it is a reference, not a source to copy. The core is GPL v3 (`LICENSE`).
 
@@ -16,10 +16,10 @@ The base is `../karabas-go-core-orion128` (the Orion-128 descends from the Speci
 
 - `src/Makefile`: the ISE flow, as in orion128. `src/karabas_<board>.{prj,xst,ut,ucf}`: its inputs (copied from orion128; the timing block of the `.ucf` describes the 40 MHz clock plan).
 - `src/make_core.py`: a symlink to `../../karabas-go-tools/make_core/make_core.py`. `src/tools/check_osd.py`: the slot check of `make core`.
-- `src/core.json`: the core file description (kgo2, one file for all boards, `specialist.kg`). Mini G only until Ф4.
-- `src/rtl/spec/`: `spec_system.v` (the machine: both memory maps, the MX pages and colour register, the PPIs, the ROM loader), `spec_cpu.v` (vm80a at 2 / 4 MHz, from orion_cpu), `spec_ppi.v` (8255 mode 0, from orion_ppi), `spec_sram.v` (orion_sram plus a write of both lanes: points and colour of a screen byte). `src/rtl/vm80a/`: upstream 1801BM1/vm80a, unchanged.
+- `src/core.json`: the core file description (kgo2, one file for all boards, `specialist.kg`). Mini and Mini G until Ф4.
+- `src/rtl/spec/`: `spec_system.v` (the machine: both memory maps, the MX pages and colour register, the PPIs, the ROM loader), `spec_cpu.v` (vm80a at 2 / 4 MHz, from orion_cpu), `spec_ppi.v` (8255 mode 0, from orion_ppi), `spec_sram.v` (orion_sram plus a write of both lanes: points and colour of a screen byte). `spec_video.v` (800 x 600 from the SRAM, the palettes of Emu80), `spec_kbd.v` (scancodes to the 12 x 6 matrix, scanned both ways, the layouts of Emu80), `spec_loader.v` (the ROM loader and the FL slots: 1 .rks, 2 Monitor, 3 MX ROM). `src/rtl/karabas_minig_top.v`, `karabas_mini_top.v`: the boards (from orion128), their soft switch indexes at the top. `src/rtl/vm80a/`: upstream 1801BM1/vm80a, unchanged.
 - `src/roms/`: `spec_m2.rom` (Monitor-2, SRAM 200000), `spmx.rom` (RAMFOS ROM of the MX, SRAM 210000), from Emu80; allowed in the repo and the `.kg` by the user (2026-11-07).
-- `src/sim/run_boot.sh`: verilator, `tb_boot.v` + `sim_boot.cpp` (`--mx`, `--turbo`, `--rom FILE:ADDR`, `--ms`, `--ppm`, `--expect`); screens in `src/sim/build/*.ppm`. `src/spec.prj`, `spec.xst`: the machine alone, `make spec-xst`, `make spec-report`.
+- `src/sim/run_boot.sh`: verilator, `tb_boot.v` + `sim_boot.cpp` (`--mx`, `--turbo`, `--rom FILE:ADDR`, `--file MS:SLOT:FILE`, `--key MS:B,B`, `--ms`, `--ppm`, `--frame` the video output, `--expect`; keys must be held about 100 ms, the Monitor debounces); `mkrks.py` the test .rks. The games of Emu80 (`dist/spec/sdcard/GAMES/*.rks`) run in it too; screens in `src/sim/build/*.ppm`. `src/spec.prj`, `spec.xst`: the machine alone, `make spec-xst`, `make spec-report`.
 - `modules/`: the git submodule [karabas-go-modules](https://github.com/andykarpov/karabas-go-modules), its rules are in `modules/CLAUDE.md`. A change there is made there and taken here by moving the submodule. Clone with `--recursive`.
 
 ## Build

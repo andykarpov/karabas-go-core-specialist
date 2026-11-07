@@ -1,7 +1,7 @@
 {
     "id": "specialist",
     "name": "Specialist",
-    "build": "00000000",
+    "build": "26110701",
     "visible": true,
     "type": "osd",
     "order": 15,
@@ -12,6 +12,7 @@
     {"filename": "roms/spmx.rom", "address": 2162688}
     ],
     "boards": {
+        "mini": {"bitstream": "karabas_mini.bin"},
         "minig": {"bitstream": "karabas_minig.bin"}
     },
     "osd": [
@@ -21,6 +22,7 @@
     {"type": "S", "name": "Model", "options": ["Specialist", "Specialist-MX"], "default": 0, "hotkey": "Menu+M"},
     {"type": "S", "name": "CPU speed", "options": ["2 MHz", "4 MHz"], "default": 0, "hotkey": "Menu+S"},
     {"type": "S", "name": "Color", "options": ["8 colors", "4 colors", "Mono"], "default": 0, "hotkey": "Menu+C"},
+    {"type": "S", "name": "Autorun", "options": ["On", "Off"], "default": 0, "hotkey": "Menu+A"},
     {"type": "T", "name": "Reset", "hotkey": "F12"}
     ]
 }

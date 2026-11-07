@@ -4,10 +4,10 @@
 /*
  spec_system.v
 
- The Specialist and the Specialist-MX: the processor, the memory maps, the ports and the SRAM, on
- one clock of 40 MHz. docs/HARDWARE.md has the maps. The structure is that of orion_system of
- karabas-go-core-orion128. Phase 0: no video, keyboard or MX devices yet (the 8253, the FDC); their
- ports are here for the next phases.
+ The Specialist and the Specialist-MX: the processor, the memory maps, the ports, the SRAM, the
+ video and the keyboard, on one clock of 40 MHz. docs/HARDWARE.md has the maps. The structure is
+ that of orion_system of karabas-go-core-orion128. The MX devices (the 8253, the FDC) come in the
+ next phases.
 
  SRAM (a byte address of 22 bits, spec_sram; a 64 KB page is {bank, a[15:0], lane}):
    000000  the main RAM: lane 0 the bytes, lane 1 the colour of each byte of the screen
@@ -15,11 +15,15 @@
    020000  the RAM disk of the MX, disks 0..7 = banks 1..4, both lanes
    200000  the Monitor of the Specialist (up to 12 KB, at C000-EFFF), bytes in a row
    210000  the ROM of the MX (48 KB, at 0000-BFFF in the ROM page), bytes in a row
- The ROMs arrive by the ROM loader of the mcu: rom_addr is that byte address, the machine is in
- reset while rom_active.
+ The ROMs arrive by the ROM loader of the mcu, files by the FL items (spec_loader); the machine is
+ in reset while either loads.
 
  The Specialist starts at 0000: after reset its Monitor answers every read (its first bytes are a
  jump to C003), until the first read at C000-FFFF. The MX starts in its ROM page.
+
+ A .rks file starts as Emu80 runs it: after the load the machine leaves reset, its Monitor runs for
+ 200 ms (it sets up the PPI and its variables), then the next opcode fetch reads JMP start instead
+ of the memory (autorun; the Specialist only, the MX in phase 2).
 
  mx (the model) is taken during reset only.
 */
@@ -29,42 +33,40 @@ module spec_system (
 	input wire reset,
 	input wire model_mx,         // 0 the Specialist, 1 the Specialist-MX
 	input wire turbo,            // the CPU at 4 MHz
+	input wire [1:0] cmode,      // the colours of the Specialist: 8, 4, mono
+	input wire autorun,          // start a .rks after its load
 
-	// the ROM loader of the mcu
+	// the ROM loader and the file loader of the mcu
 	input wire rom_active,
 	input wire [21:0] rom_addr,
 	input wire [7:0] rom_data,
 	input wire rom_wr,
+	input wire file_active,
+	input wire [7:0] file_slot,
+	input wire [31:0] file_addr,
+	input wire [7:0] file_data,
+	input wire file_wr,
 
-	// the keyboard PPI (F800 / FFE0): the matrix of 12 x 6 is scanned both ways
-	output wire [7:0] kb_pa_o,   // columns 0..7
-	output wire [7:0] kb_pb_o,   // PB7..2 rows 5..0
-	output wire [3:0] kb_pc_o,   // PC3..0 columns 8..11
-	output wire kb_pa_in,
-	output wire kb_pb_in,
-	output wire kb_pcl_in,
-	input wire [7:0] kb_pa_i,
-	input wire [7:2] kb_pb_i,
-	input wire [3:0] kb_pc_i,
-	input wire kb_nr_n,          // PB1: the key NR (Shift), 0 = pressed
-	input wire tape_in,          // PB0
+	input wire [7:0] kb_scancode,
+	input wire kb_scancode_upd,
+	input wire [12:0] joy,
 
-	output wire beep,            // PC5
+	output wire [23:0] rgb,
+	output wire hs,
+	output wire vs,
+	output wire de,
+
+	input wire tape_in,
 	output wire tape_out,        // PC7
+	output wire beep,            // PC5
 	output reg mx = 1'b0,
-
-	// the video port of spec_sram
-	input wire vid_req,
-	input wire [20:0] vid_addr,
-	output wire [15:0] vid_dout,
-	output wire vid_valid,
 
 	output wire [20:0] MA,
 	inout wire [15:0] MD,
 	output wire [1:0] MWR_N
 );
 
-wire run_reset = reset | rom_active;
+wire run_reset = reset | rom_active | file_active;
 
 always @(posedge clk)
 	if (run_reset)
@@ -73,7 +75,7 @@ always @(posedge clk)
 wire [15:0] a;
 wire [7:0] cpu_do;
 reg [7:0] cpu_di;
-wire mem_rd, mem_wr;
+wire mem_rd, mem_wr, fetch;
 
 spec_cpu cpu (
 	.clk(clk),
@@ -85,13 +87,17 @@ spec_cpu cpu (
 	.din(cpu_di),
 	.mem_rd(mem_rd),
 	.mem_wr(mem_wr),
+	.fetch(fetch),
 	.inte()
 );
 
-reg wr_d = 1'b0;
-always @(posedge clk)
+reg wr_d = 1'b0, rd_d = 1'b0;
+always @(posedge clk) begin
 	wr_d <= mem_wr;
+	rd_d <= mem_rd;
+end
 wire wr_p = mem_wr & ~wr_d;   // one clock at the start of a write
+wire rd_end = rd_d & ~mem_rd; // the clock after a read
 
 // ------------------------------------------------------------------ decoding
 // the Specialist
@@ -140,18 +146,36 @@ wire sel_kbd = mx ? m_kbd : o_kbd;
 wire sel_usr = mx ? m_usr : o_usr;
 wire sel_dev = mx ? m_dev : (o_usr | o_kbd);
 
-// ------------------------------------------------------------------ the PPIs
-wire [7:0] kbd_do, usr_do, kb_pc;
+// ------------------------------------------------------------------ the PPIs and the keyboard
+wire [7:0] kbd_do, usr_do, kb_pc, kb_pa, kb_pb, kb_pa_i;
+wire [3:0] kb_pc_i;
+wire [7:2] kb_pb_i;
+wire kb_nr_n;
 
 spec_ppi ppi_kbd (
 	.clk(clk), .reset(run_reset), .a(a[1:0]), .wr(wr_p & sel_kbd), .din(cpu_do), .dout(kbd_do),
 	.pa_i(kb_pa_i), .pb_i({ kb_pb_i, kb_nr_n, tape_in }), .pc_i({ 4'hF, kb_pc_i }),
-	.pa_in(kb_pa_in), .pb_in(kb_pb_in), .pcl_in(kb_pcl_in),
-	.pa_o(kb_pa_o), .pb_o(kb_pb_o), .pc_o(kb_pc)
+	.pa_in(), .pb_in(), .pcl_in(),
+	.pa_o(kb_pa), .pb_o(kb_pb), .pc_o(kb_pc)
 );
-assign kb_pc_o = kb_pc[3:0];
 assign beep = kb_pc[5];
 assign tape_out = kb_pc[7];
+
+spec_kbd kbd (
+	.clk(clk),
+	.reset(reset),
+	.mx(mx),
+	.scancode(kb_scancode),
+	.scancode_upd(kb_scancode_upd),
+	.joy(joy),
+	.pa_o(kb_pa),
+	.pc_o(kb_pc[3:0]),
+	.pb_o(kb_pb[7:2]),
+	.pa_i(kb_pa_i),
+	.pc_i(kb_pc_i),
+	.pb_i(kb_pb_i),
+	.nr_n(kb_nr_n)
+);
 
 // the user port, nothing on it yet
 spec_ppi ppi_usr (
@@ -210,27 +234,79 @@ wire sram_we = mem_wr && (sel_ram || sel_disk);
 wire sram_wr16 = sel_ram && scr;
 wire [7:0] sram_do;
 
+// ------------------------------------------------------------------ autorun of a .rks
+wire [15:0] rks_start;
+wire rks_ok;
+reg file_d = 1'b0;
+reg [22:0] run_wait = 23'd0;   // 200 ms of the Monitor
+reg run_pend = 1'b0, run_arm = 1'b0;
+reg [1:0] inj = 2'd0;          // 1 the opcode, 2 / 3 the address bytes
+always @(posedge clk) begin
+	file_d <= file_active;
+	if (reset) begin
+		run_pend <= 1'b0;
+		run_arm <= 1'b0;
+		inj <= 2'd0;
+	end
+	else if (file_d && !file_active) begin
+		run_pend <= autorun && rks_ok && file_slot == 8'd1 && !mx;
+		run_arm <= 1'b0;
+		inj <= 2'd0;
+		run_wait <= 23'd7999999;
+	end
+	else if (run_pend) begin
+		if (run_wait == 23'd0) begin
+			run_pend <= 1'b0;
+			run_arm <= 1'b1;
+		end
+		else
+			run_wait <= run_wait - 23'd1;
+	end
+	else if (run_arm && mem_rd && fetch) begin
+		run_arm <= 1'b0;
+		inj <= 2'd1;
+	end
+	else if (inj != 2'd0 && rd_end)
+		inj <= inj == 2'd3 ? 2'd0 : inj + 2'd1;
+end
+
 always @* begin
 	cpu_di = 8'hFF;
-	if (sel_kbd) cpu_di = kbd_do;
+	if (inj == 2'd1) cpu_di = 8'hC3;
+	else if (inj == 2'd2) cpu_di = rks_start[7:0];
+	else if (inj == 2'd3) cpu_di = rks_start[15:8];
+	else if (sel_kbd) cpu_di = kbd_do;
 	else if (sel_usr) cpu_di = usr_do;
 	else if (sel_rom || sel_ram || sel_disk) cpu_di = sram_do;
 end
 
-// the ROM loader: a byte waits for its slot, the mcu writes one in ten clocks or less often
-reg aux_req = 1'b0;
-reg [21:0] aux_addr = 22'd0;
-reg [7:0] aux_din = 8'd0;
-wire aux_ack;
-always @(posedge clk) begin
-	if (rom_wr) begin
-		aux_req <= 1'b1;
-		aux_addr <= rom_addr;
-		aux_din <= rom_data;
-	end
-	else if (aux_ack)
-		aux_req <= 1'b0;
-end
+// ------------------------------------------------------------------ the loaders, the SRAM, the video
+wire aux_req, aux_ack;
+wire [21:0] aux_addr;
+wire [7:0] aux_din;
+
+spec_loader loader (
+	.clk(clk),
+	.rom_active(rom_active),
+	.rom_addr(rom_addr),
+	.rom_data(rom_data),
+	.rom_wr(rom_wr),
+	.file_active(file_active),
+	.file_slot(file_slot),
+	.file_addr(file_addr),
+	.file_data(file_data),
+	.file_wr(file_wr),
+	.rks_start(rks_start),
+	.rks_ok(rks_ok),
+	.aux_req(aux_req),
+	.aux_addr(aux_addr),
+	.aux_din(aux_din),
+	.aux_ack(aux_ack)
+);
+
+wire vid_req, vid_valid;
+wire [20:0] vid_addr;
+wire [15:0] vid_dout;
 
 spec_sram sram (
 	.clk(clk),
@@ -254,6 +330,20 @@ spec_sram sram (
 	.MA(MA),
 	.MD(MD),
 	.MWR_N(MWR_N)
+);
+
+spec_video video (
+	.clk(clk),
+	.mx(mx),
+	.cmode(cmode),
+	.vid_req(vid_req),
+	.vid_addr(vid_addr),
+	.vid_dout(vid_dout),
+	.vid_valid(vid_valid),
+	.rgb(rgb),
+	.hs(hs),
+	.vs(vs),
+	.de(de)
 );
 
 endmodule
