@@ -6,37 +6,232 @@
     "type": "osd",
     "order": 15,
     "eeprom_bank": 255,
-        "roms": [
-    {"filename": "roms/spec_m2.rom", "address": 2097152},
-    {"filename": "roms/spmx.rom", "address": 2162688}
+    "roms": [
+        {
+            "filename": "roms/spec_m2.rom",
+            "address": 2097152
+        },
+        {
+            "filename": "roms/spmx.rom",
+            "address": 2162688
+        }
     ],
     "boards": {
-        "go": {"bitstream": "karabas_go.bin"},
-        "mini": {"bitstream": "karabas_mini.bin"},
-        "minig": {"bitstream": "karabas_minig.bin"}
+        "go": {
+            "bitstream": "karabas_go.bin"
+        },
+        "mini": {
+            "bitstream": "karabas_mini.bin"
+        },
+        "minig": {
+            "link": 2,
+            "build": "26111307",
+            "bitstream": "karabas_minig.bin"
+        }
     },
     "osd": [
-    {"type": "F", "name": "Disk A", "slot": 4, "extensions": ".odi,.img", "dir": "/specialist", "hotkey": "Menu+F7", "physical": 1, "page": 1},
-    {"type": "F", "name": "Disk B", "slot": 5, "extensions": ".odi,.img", "dir": "/specialist", "hotkey": "Menu+F8", "physical": 1, "page": 1},
-    {"type": "F", "name": "SD card", "slot": 6, "extensions": ".img", "dir": "/specialist", "page": 1},
-    {"type": "FL", "name": "RKS file", "slot": 1, "extensions": ".rks", "dir": "/specialist", "hotkey": "Menu+F2", "page": 2},
-    {"type": "FL", "name": "Monitor", "slot": 2, "extensions": ".rom,.bin", "dir": "/specialist", "hotkey": "Menu+F4", "autoload": 1, "page": 2},
-    {"type": "FL", "name": "MX ROM", "slot": 3, "extensions": ".rom,.bin", "dir": "/specialist", "hotkey": "Menu+F5", "autoload": 1, "page": 2},
-    {"type": "FL", "name": "SDOS ROM", "slot": 7, "extensions": ".bin,.rom", "dir": "/specialist", "autoload": 1, "page": 2},
-    {"type": "FL", "name": "MX2 ROM", "slot": 0, "extensions": ".bin,.rom", "dir": "/specialist", "autoload": 1, "page": 2},
-    {"type": "S", "name": "Model", "options": ["Original", "MX", "MX2"], "default": 0, "hotkey": "Menu+M", "index": 9},
-    {"type": "S", "name": "CPU", "options": ["KR580VM80A", "Z80"], "default": 0, "page": 3, "index": 10},
-    {"type": "S", "name": "CPU speed", "options": ["2 MHz", "4 MHz"], "default": 0, "hotkey": "Menu+S", "index": 11},
-    {"type": "S", "name": "Keyboard", "options": ["Auto", "Original", "RAMFOS", "Lik"], "default": 0, "hotkey": "Menu+K", "index": 12},
-    {"type": "S", "name": "Color", "options": ["8 colors", "4 colors", "Mono"], "default": 0, "hotkey": "Menu+C", "index": 13},
-    {"type": "S", "name": "Ext port", "options": ["None", "Mouse", "SDOS"], "default": 0, "page": 3, "index": 14},
-    {"type": "S", "name": "AY", "options": ["Off", "On"], "default": 0, "page": 3, "index": 15},
-    {"type": "S", "name": "Autorun", "options": ["On", "Off"], "default": 0, "hotkey": "Menu+A", "index": 16},
-    {"type": "S", "name": "Video", "options": ["800x600 60Hz", "720x576 50Hz"], "default": 0, "page": 3, "index": 17},
-    {"type": "T", "name": "Reset", "hotkey": "F12", "index": 18},
-    {"type": "-"},
-    {"type": "M", "name": "Disks", "open": 1},
-    {"type": "M", "name": "Files", "open": 2},
-    {"type": "M", "name": "Hardware", "open": 3}
+        {
+            "type": "F",
+            "name": "Disk A",
+            "slot": 4,
+            "extensions": ".odi,.img",
+            "dir": "/specialist",
+            "hotkey": "Menu+F7",
+            "physical": 1,
+            "page": 1
+        },
+        {
+            "type": "F",
+            "name": "Disk B",
+            "slot": 5,
+            "extensions": ".odi,.img",
+            "dir": "/specialist",
+            "hotkey": "Menu+F8",
+            "physical": 1,
+            "page": 1
+        },
+        {
+            "type": "F",
+            "name": "SD card",
+            "slot": 6,
+            "extensions": ".img",
+            "dir": "/specialist",
+            "page": 1
+        },
+        {
+            "type": "FL",
+            "name": "RKS file",
+            "slot": 1,
+            "extensions": ".rks",
+            "dir": "/specialist",
+            "hotkey": "Menu+F2",
+            "page": 2
+        },
+        {
+            "type": "FL",
+            "name": "Monitor",
+            "slot": 2,
+            "extensions": ".rom,.bin",
+            "dir": "/specialist",
+            "hotkey": "Menu+F4",
+            "autoload": 1,
+            "page": 2
+        },
+        {
+            "type": "FL",
+            "name": "MX ROM",
+            "slot": 3,
+            "extensions": ".rom,.bin",
+            "dir": "/specialist",
+            "hotkey": "Menu+F5",
+            "autoload": 1,
+            "page": 2
+        },
+        {
+            "type": "FL",
+            "name": "SDOS ROM",
+            "slot": 7,
+            "extensions": ".bin,.rom",
+            "dir": "/specialist",
+            "autoload": 1,
+            "page": 2
+        },
+        {
+            "type": "FL",
+            "name": "MX2 ROM",
+            "slot": 0,
+            "extensions": ".bin,.rom",
+            "dir": "/specialist",
+            "autoload": 1,
+            "page": 2
+        },
+        {
+            "type": "S",
+            "name": "Model",
+            "options": [
+                "Original",
+                "MX",
+                "MX2"
+            ],
+            "default": 0,
+            "hotkey": "Menu+M",
+            "index": 9
+        },
+        {
+            "type": "S",
+            "name": "CPU",
+            "options": [
+                "KR580VM80A",
+                "Z80"
+            ],
+            "default": 0,
+            "page": 3,
+            "index": 10
+        },
+        {
+            "type": "S",
+            "name": "CPU speed",
+            "options": [
+                "2 MHz",
+                "4 MHz"
+            ],
+            "default": 0,
+            "hotkey": "Menu+S",
+            "index": 11
+        },
+        {
+            "type": "S",
+            "name": "Keyboard",
+            "options": [
+                "Auto",
+                "Original",
+                "RAMFOS",
+                "Lik"
+            ],
+            "default": 0,
+            "hotkey": "Menu+K",
+            "index": 12
+        },
+        {
+            "type": "S",
+            "name": "Color",
+            "options": [
+                "8 colors",
+                "4 colors",
+                "Mono"
+            ],
+            "default": 0,
+            "hotkey": "Menu+C",
+            "index": 13
+        },
+        {
+            "type": "S",
+            "name": "Ext port",
+            "options": [
+                "None",
+                "Mouse",
+                "SDOS"
+            ],
+            "default": 0,
+            "page": 3,
+            "index": 14
+        },
+        {
+            "type": "S",
+            "name": "AY",
+            "options": [
+                "Off",
+                "On"
+            ],
+            "default": 0,
+            "page": 3,
+            "index": 15
+        },
+        {
+            "type": "S",
+            "name": "Autorun",
+            "options": [
+                "On",
+                "Off"
+            ],
+            "default": 0,
+            "hotkey": "Menu+A",
+            "index": 16
+        },
+        {
+            "type": "S",
+            "name": "Video",
+            "options": [
+                "800x600 60Hz",
+                "720x576 50Hz"
+            ],
+            "default": 0,
+            "page": 3,
+            "index": 17
+        },
+        {
+            "type": "T",
+            "name": "Reset",
+            "hotkey": "F12",
+            "index": 18
+        },
+        {
+            "type": "-"
+        },
+        {
+            "type": "M",
+            "name": "Disks",
+            "open": 1
+        },
+        {
+            "type": "M",
+            "name": "Files",
+            "open": 2
+        },
+        {
+            "type": "M",
+            "name": "Hardware",
+            "open": 3
+        }
     ]
 }
